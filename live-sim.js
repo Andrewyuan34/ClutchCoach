@@ -48,12 +48,14 @@ const S = {
   rotationDone: {},      // 已执行的固定轮换窗口，避免连续死球反复换
   refFrustration: { knicks: 0, spurs: 0 }, // 对吹罚/漏判产生的心理波动
   clutchAftershock: { team: null, val: 0, ticks: 0, kind: "" }, // 关键时刻余震
+  homeTeam: null, awayTeam: null, arena: "", crowdHeat: 0, // 主场与声浪
   coachIdle: 0,          // 玩家连续未进行有效指挥的回合数
   targetLevel: 0,        // 被对手摸透/针对的惩罚层数
 };
 
 const QUARTERS = 4;
 const QUARTER_SECONDS = 720;   // 真实每节 12 分钟
+const HOME_BY_GAME = { 1: "spurs", 2: "spurs", 3: "knicks", 4: "knicks", 5: "spurs", 6: "knicks", 7: "spurs" };
 
 /* 真实校准基准（每队每场 48 分钟，NBA 联盟平均量级）：
    得分~113 · 投篮41-89 · 三分12-37 · 罚球17-22 · 篮板43 · 助攻26
@@ -101,12 +103,35 @@ function startApp() {
   $("tab-feed").onclick = () => setView("feed");
   $("tab-box").onclick = () => setView("box");
   $("tab-cmd").onclick = () => setView("cmd");
+  setupBoxScrollLock();
   showScreen("select");
 }
 
 function showScreen(name) {
   document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
   $("screen-" + name).classList.add("active");
+}
+
+function setupBoxScrollLock() {
+  document.querySelectorAll(".box-scroll").forEach((el) => {
+    let sx = 0, sy = 0, locked = "";
+    const clearLock = () => { locked = ""; el.classList.remove("lock-x", "lock-y"); };
+    el.addEventListener("touchstart", (e) => {
+      const t = e.touches[0];
+      sx = t.clientX; sy = t.clientY;
+      clearLock();
+    }, { passive: true });
+    el.addEventListener("touchmove", (e) => {
+      if (locked || !e.touches.length) return;
+      const t = e.touches[0];
+      const dx = t.clientX - sx, dy = t.clientY - sy;
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      locked = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+      el.classList.add(locked === "x" ? "lock-x" : "lock-y");
+    }, { passive: true });
+    el.addEventListener("touchend", clearLock, { passive: true });
+    el.addEventListener("touchcancel", clearLock, { passive: true });
+  });
 }
 
 // ----------------- 系列赛页 -----------------
@@ -133,6 +158,7 @@ function initStats() {
       p.stamina = 100;
       p.heat = 0;          // 个人气势 -100(冰冷) ~ +100(火热)
       p.clutch = CLUTCH_MAP[p.id] ?? 1.0;   // 大心脏系数
+      p.order = idx;                        // 真实轮换顺序；前5名为默认首发
       p.lastOnAt = idx < 5 ? 0 : -99;       // 本次上场时间点（分钟）
       p.lastOffAt = idx < 5 ? -99 : 0;      // 本次下场/休息开始时间点（分钟）
     });
@@ -276,6 +302,14 @@ function maybeAutoRotationWindow() {
 }
 
 // ----------------- 单场开始 -----------------
+function setupHomeCourt() {
+  S.homeTeam = HOME_BY_GAME[S.gameNo] || (S.gameNo % 2 === 1 ? "spurs" : "knicks");
+  S.awayTeam = S.homeTeam === "knicks" ? "spurs" : "knicks";
+  const profile = HOME_COURT_PROFILE[S.homeTeam];
+  S.arena = profile ? profile.arena : "总决赛现场";
+  S.crowdHeat = 8;
+}
+
 function startGame() {
   S.score = { knicks: 0, spurs: 0 };
   S.quarter = 1;
@@ -296,6 +330,8 @@ function startGame() {
   S.rotationDone = {};
   S.refFrustration = { knicks: 0, spurs: 0 };
   S.clutchAftershock = { team: null, val: 0, ticks: 0, kind: "" };
+  setupHomeCourt();
+  S.momentum[S.homeTeam] = 5;
   S.coachIdle = 0;
   S.targetLevel = 0;
   // 两队开局战术 = 各自真实战术身份（尼克斯传导/弹性，马刺快攻/护框）
@@ -312,6 +348,8 @@ function startGame() {
   updateScoreboard();
   showScreen("game");
   pushFeed("system", `🏆 2026 NBA总决赛 G${S.gameNo}｜大比分 ${ROSTERS.knicks.name} ${S.seriesWins.knicks} - ${S.seriesWins.spurs} ${ROSTERS.spurs.name}。${S.seriesWins.knicks === 3 ? "尼克斯再赢1场即夺53年来首冠，马刺背水一战！" : ""}`);
+  pushFeed("system", `🏟 今晚地点：${S.arena} · ${ROSTERS[S.homeTeam].name}主场（${HOME_COURT_PROFILE[S.homeTeam].tag}）。`);
+  homeCrowdText("opening", { H: ROSTERS[S.homeTeam].name, A: ROSTERS[S.awayTeam].name }, 1);
   if (typeof SERIES_PBP_LIBRARY !== "undefined") {
     pushFeed("system", `📼 已读取前四场全部逐回合文字记录：${SERIES_PBP_LIBRARY.totalRecords} 条、${SERIES_PBP_LIBRARY.eventTypeCount} 类事件，将混合进本场直播语境。`);
     richFeed("broadcast", "system", {}, 1);
@@ -411,6 +449,9 @@ function togglePause() {
     updateTimeoutInfo();
     addMomentum(S.myTeam, 7);          // 叫暂停稳住军心，回一点士气
     S.refFrustration[S.myTeam] = Math.max(0, (S.refFrustration[S.myTeam] || 0) - 8);
+    if (S.myTeam === S.awayTeam) S.crowdHeat = clamp(S.crowdHeat - 5, 0, 30);
+    else S.crowdHeat = clamp(S.crowdHeat + 2, 0, 30);
+    homeCrowdText("timeout", {}, 0.65);
     liftHeat(S.myTeam, 8);             // 在场球员士气小幅回暖
     S.run = { team: null, pts: 0 };
     autoRotate(S.oppTeam, true, "暂停批量轮换");   // 对手也趁暂停批量轮换疲劳球员
@@ -431,6 +472,9 @@ function maybeOppTimeout() {
   updateTimeoutInfo();
   addMomentum(opp, 7);     // 对手叫暂停稳住军心
   S.refFrustration[opp] = Math.max(0, (S.refFrustration[opp] || 0) - 8);
+  if (opp === S.awayTeam) S.crowdHeat = clamp(S.crowdHeat - 5, 0, 30);
+  else S.crowdHeat = clamp(S.crowdHeat + 2, 0, 30);
+  homeCrowdText("timeout", {}, 0.65);
   liftHeat(opp, 8);
   aiThink(true);           // 借暂停变阵
   autoRotate(opp, true, "暂停批量轮换");
@@ -517,6 +561,7 @@ function runPossession() {
   if (oSch === "motion") toRate -= 0.03;
   if (dSch === "press" && oSch === "pace") toRate += 0.03;   // 紧逼克快攻
   toRate += (S.refFrustration[off] || 0) * 0.0012;           // 被争议哨/漏判影响后更容易急躁失误
+  toRate += awayNoisePenalty(off);                           // 客队在高声浪下沟通更困难
   toRate -= clutchAftershockMod(off) * 0.012;                // 关键球余震：自信方更稳，受挫方更慌
   toRate += (1 - staminaFactor(shooter)) * 0.32;             // 体力差会明显增加失误
   if (shooter.stamina < 30) toRate += 0.025;
@@ -566,10 +611,10 @@ function runPossession() {
 
   // 命中率
   let make = baseMake(shooter, isThree, isRim);
-  make += S.momentum[off] * 0.0025;
-  make += (shooter.heat || 0) * 0.0013;              // 个人手感（火热↑ / 低迷↓）
-  make += S.boost[off] * 0.0015;
-  make -= (defPressure(def) - 72) * 0.0035;          // 防守压力(中心化)
+  make += S.momentum[off] * 0.0014;
+  make += (shooter.heat || 0) * 0.0008;              // 个人手感（火热↑ / 低迷↓），常规时间不再过度放大
+  make += S.boost[off] * 0.0011;
+  make -= (defPressure(def) - 72) * 0.0045;          // 防守压力(中心化)增强，总决赛强度更硬
   make += matchup;                                   // 战术克制
   make += isThree ? dbase.make3 : (isRim ? dbase.makeRim : dbase.makeMid);
   make += isStar ? dbase.star : dbase.other;         // 包夹影响
@@ -578,15 +623,17 @@ function runPossession() {
   make += (staminaFactor(shooter) - 1) * 0.58;       // 体力影响：疲劳会直接拉低命中率
   if (shooter.stamina < 35) make -= (35 - shooter.stamina) * 0.0025;
   if (off === S.myTeam) make -= coachTargetPenalty("make"); // 长时间不变招：对手更容易提前站位
-  make = clamp(make, 0.12, 0.93);
+  const makeLo = isThree ? 0.18 : (isRim ? 0.36 : 0.22);
+  const makeHi = isThree ? 0.52 : (isRim ? 0.76 : 0.58);
+  make = clamp(make, makeLo, makeHi);
   const made = Math.random() < make;
 
   // 造犯规（内线高、三分低；护框/联防内线造犯规略增；下半场大分差时尺度会自然变紧）
   const wEdge = whistleEdge(off, isRim);
-  let foulP = isRim ? 0.30 : (isThree ? 0.05 : 0.11);
-  if (oSch === "inside") foulP += 0.04;
-  if (isRim && (dSch === "paint" || dSch === "zone")) foulP += 0.03;
-  foulP = clamp(foulP + wEdge, 0.025, 0.42);
+  let foulP = isRim ? 0.22 : (isThree ? 0.025 : 0.075);
+  if (oSch === "inside") foulP += 0.025;
+  if (isRim && (dSch === "paint" || dSch === "zone")) foulP += 0.018;
+  foulP = clamp(foulP + wEdge, 0.015, 0.34);
   if (wEdge > 0.022) refPressureText("scaleShift", off, { T: ROSTERS[off].name, D: ROSTERS[def].name, P: shooter.name }, 0.10);
   const drawFoul = Math.random() < foulP;
 
@@ -615,8 +662,8 @@ function runPossession() {
     shooter.st.pts += pts;
     if (assister) assister.st.ast++;
     addScore(off, pts);
-    addMomentum(off, isThree ? 7 : 5);
-    bumpHeat(shooter, isThree ? 22 : (isRim ? 16 : 14));   // 进球点燃个人手感
+    addMomentum(off, isThree ? 5 : 3.5);
+    bumpHeat(shooter, isThree ? 16 : (isRim ? 12 : 10));   // 进球点燃个人手感，但不再快速滚雪球
     if (assister) bumpHeat(assister, 9);
     pushFeed(off, scoringText(shooter, isThree, isRim, assister), { team: off, score: true, big: isThree || isRim, pts });
     maybeRichFeed("afterScore", off, scoreContext(off), 0.38, { mini: !isThree && !isRim });
@@ -636,6 +683,7 @@ function runPossession() {
     const tplKey = isThree ? "miss_three" : (isRim ? "miss_layup" : "miss_mid");
     bumpHeat(shooter, isThree ? -11 : -9);             // 打铁影响手感
     pushFeed(off, fill(rand(TEMPLATES[tplKey]), { P: shooter.name }), { team: off });
+    if (off === S.homeTeam) nudgeCrowd(off, -1.8, "homeMiss", 0.20);
     maybeNoCall(off, def, shooter, isRim, isThree);
     maybeRichFeed("afterMiss", off, scoreContext(off), 0.34);
     rebound(def, off);
@@ -646,7 +694,11 @@ function shootFTs(team, shooter, n) {
   let made = 0;
   for (let i = 0; i < n; i++) {
     shooter.st.fta++;
-    const ftRate = clamp((shooter.ft ?? 0.75) - (1 - staminaFactor(shooter)) * 0.10, 0.45, 0.95);
+    let ftRate = (shooter.ft ?? 0.75) - (1 - staminaFactor(shooter)) * 0.10;
+    if (team === S.homeTeam) ftRate += 0.006;
+    if (team === S.awayTeam) ftRate -= S.crowdHeat * 0.0005;
+    if (team === S.awayTeam) homeCrowdText("awayFT", {}, 0.16);
+    ftRate = clamp(ftRate, 0.45, 0.95);
     if (Math.random() < ftRate) {
       shooter.st.ftm++; shooter.st.pts++; addScore(team, 1); made++;
     }
@@ -678,9 +730,9 @@ function switchPossession() {
 
 // ----------------- 概率/选人辅助 -----------------
 function baseMake(p, isThree, isRim) {
-  if (isThree) return 0.30 + (p.off - 60) * 0.004 + (p.thr - 0.4) * 0.2;
-  if (isRim)   return 0.58 + (p.off - 60) * 0.005;
-  return 0.37 + (p.off - 60) * 0.004;
+  if (isThree) return 0.275 + (p.off - 60) * 0.0032 + (p.thr - 0.4) * 0.16;
+  if (isRim)   return 0.515 + (p.off - 60) * 0.0042;
+  return 0.335 + (p.off - 60) * 0.0032;
 }
 function defPressure(team) {
   const ps = onCourtArr(team);
@@ -932,6 +984,27 @@ function scoreContext(team) {
   const other = team === "knicks" ? "spurs" : "knicks";
   return { T: ROSTERS[team].name, D: ROSTERS[other].name };
 }
+function crowdLevel() {
+  if (S.crowdHeat >= 24) return "爆炸";
+  if (S.crowdHeat >= 16) return "高涨";
+  if (S.crowdHeat >= 8) return "起势";
+  return "安静";
+}
+function homeCrowdText(kind, map = {}, chance = 1) {
+  if (!S.homeTeam || typeof HOME_FLAVOR === "undefined" || Math.random() > chance) return false;
+  const pool = HOME_FLAVOR[S.homeTeam] && HOME_FLAVOR[S.homeTeam][kind];
+  if (!pool || !pool.length) return false;
+  pushFeed("system", fill(rand(pool), { H: ROSTERS[S.homeTeam].name, A: ROSTERS[S.awayTeam].name, ...map }), { mini: kind !== "opening", big: kind === "clutch" });
+  return true;
+}
+function nudgeCrowd(team, delta, kind, chance = 0.2) {
+  if (!S.homeTeam) return;
+  if (team === S.homeTeam) S.crowdHeat = clamp(S.crowdHeat + delta, 0, 30);
+  else S.crowdHeat = clamp(S.crowdHeat - delta * 0.75, 0, 30);
+  if (kind) homeCrowdText(kind, {}, chance);
+}
+function homeMakeBonus(team) { return team === S.homeTeam ? S.crowdHeat * 0.00045 : 0; }
+function awayNoisePenalty(team) { return team === S.awayTeam ? S.crowdHeat * 0.00045 : 0; }
 
 // ----------------- 视图切换 -----------------
 function setView(v) {
@@ -963,7 +1036,7 @@ function renderBox() {
   ["knicks", "spurs"].forEach((t) => {
     const tbody = $("box-" + t);
     if (!ROSTERS[t].players[0].st) return;
-    const players = [...ROSTERS[t].players].sort((a, b) => b.st.sec - a.st.sec);
+    const players = [...ROSTERS[t].players].sort((a, b) => (a.order ?? 99) - (b.order ?? 99));
     const rows = players.map((p) => {
       const s = p.st;
       const min = Math.round(s.sec / 60);    // 真实分钟（已是真实秒）
@@ -1067,13 +1140,11 @@ function renderCmd() {
 
   // 情报区
   const recDef = bestCounterDef(oOff), recOff = bestCounterOff(oDef);
+  renderCoachAdvice(recOff, recDef, oOff, oDef);
   $("intel-box").innerHTML =
-    `<div class="intel-row"><span class="il-lbl">对手进攻</span>` +
-      `<b>${OFF_SCHEMES[oOff].icon} ${OFF_SCHEMES[oOff].name}</b>` +
-      `<span class="il-tip">→ 建议防守 <b>${DEF_SCHEMES[recDef].icon}${DEF_SCHEMES[recDef].name}</b></span></div>` +
-    `<div class="intel-row"><span class="il-lbl">对手防守</span>` +
-      `<b>${DEF_SCHEMES[oDef].icon} ${DEF_SCHEMES[oDef].name}</b>` +
-      `<span class="il-tip">→ 建议进攻 <b>${OFF_SCHEMES[recOff].icon}${OFF_SCHEMES[recOff].name}</b></span></div>`;
+    `<div class="intel-row"><span class="il-lbl">对手</span>` +
+      `<b>${OFF_SCHEMES[oOff].icon}${OFF_SCHEMES[oOff].name}</b>` +
+      `<span class="il-tip">防守 <b>${DEF_SCHEMES[oDef].icon}${DEF_SCHEMES[oDef].name}</b></span></div>`;
 
   // 我方进攻战术按钮
   const offBox = $("my-off");
@@ -1091,10 +1162,75 @@ function schemeBtn(key, info, kind, recKey) {
   const b = document.createElement("button");
   const active = S.scheme[S.myTeam][kind] === key;
   b.className = "sch-btn" + (active ? " active" : "") + (key === recKey ? " rec" : "");
-  b.innerHTML = `<span class="sch-name">${info.icon} ${info.name}${key === recKey ? ' <i class="rec-dot">克制</i>' : ""}</span>` +
-                `<span class="sch-desc">${info.desc}</span>`;
+  b.innerHTML = `<span class="sch-name">${info.icon} ${info.name}</span>` +
+                `<span class="sch-desc">${schemeShort(kind, key)}</span>`;
   b.onclick = () => setMyScheme(kind, key);
   return b;
+}
+
+function schemeShort(kind, key) {
+  const map = kind === "off" ? {
+    balanced: "稳妥 · 少犯错", inside: "冲框 · 造杀伤", perimeter: "破收缩 · 三分",
+    pace: "提速 · 打乱战", iso: "球星 · 硬解", motion: "传导 · 破包夹",
+  } : {
+    man: "稳守 · 不冒险", zone: "收缩 · 防突破", press: "逼抢 · 赌失误",
+    paint: "护框 · 放外线", double: "夹球星 · 放角色", switch: "换防 · 防挡拆",
+  };
+  return map[key] || "按场上形势调整";
+}
+function reasonOff(key, oppDef) {
+  const map = {
+    perimeter: "对手收缩禁区，外线会有空间",
+    motion: "对手包夹/紧逼时，多传一次能破局",
+    iso: "需要核心硬解，适合手感火热时",
+    inside: "对手外扩或怕身体对抗，直接冲篮下",
+    pace: "对手退防慢，用速度制造混乱",
+    balanced: "局面不乱，先减少失误稳住节奏",
+  };
+  return map[key] || OFF_SCHEMES[key].desc;
+}
+function reasonDef(key, oppOff) {
+  const map = {
+    paint: "对手在冲击篮下，先堵禁区",
+    zone: "限制突破和单打，让对手投外线",
+    press: "需要追分或打乱对方节奏",
+    double: "对手核心连续拿球，先夹击降温",
+    switch: "对手挡拆多，换防减少错位",
+    man: "对手进攻不偏科，先稳住对位",
+  };
+  return map[key] || DEF_SCHEMES[key].desc;
+}
+function getSubSuggestion(team, recOff) {
+  const court = onCourtArr(team).slice();
+  const bench = benchArr(team).slice();
+  const tired = court.sort((a, b) => (a.stamina + (a.heat || 0) * 0.15) - (b.stamina + (b.heat || 0) * 0.15))[0];
+  const preferShooting = recOff === "perimeter" || recOff === "motion";
+  const fresh = bench.filter((p) => p.stamina > 55).sort((a, b) => {
+    const av = a.stamina + (preferShooting ? a.thr * 40 : a.def * 0.25) + a.off * 0.15;
+    const bv = b.stamina + (preferShooting ? b.thr * 40 : b.def * 0.25) + b.off * 0.15;
+    return bv - av;
+  })[0];
+  if (!tired || !fresh) return "轮换暂时正常，优先调整战术。";
+  if (tired.stamina < 45) return `<b>${tired.name}</b>体力偏低，考虑换上<b>${fresh.name}</b>。`;
+  if ((tired.heat || 0) < -25) return `<b>${tired.name}</b>状态低迷，<b>${fresh.name}</b>可以先顶一段。`;
+  if (fresh.stamina > tired.stamina + 25) return `<b>${fresh.name}</b>体力充足，可作为下一波轮换选择。`;
+  return "场上体力还能撑，除非要针对战术再换人。";
+}
+function renderCoachAdvice(recOff, recDef, oppOff, oppDef) {
+  const box = $("coach-advice");
+  if (!box) return;
+  const sub = getSubSuggestion(S.myTeam, recOff);
+  const homeTip = S.myTeam === S.homeTeam
+    ? `${HOME_COURT_PROFILE[S.homeTeam].shortArena}声浪${crowdLevel()}，顺风会放大一波流，但连续打铁也会焦躁。`
+    : `客场面对${HOME_COURT_PROFILE[S.homeTeam].shortArena}声浪${crowdLevel()}，稳住第一传，暂停可压低噪音。`;
+  box.innerHTML =
+    `<div class="ca-title">📋 现在该做</div>` +
+    `<div class="ca-grid">` +
+      `<div class="ca-row"><div class="ca-k">进攻</div><div class="ca-v"><b>${OFF_SCHEMES[recOff].icon}${OFF_SCHEMES[recOff].name}</b> <span>— ${reasonOff(recOff, oppDef)}</span></div></div>` +
+      `<div class="ca-row"><div class="ca-k">防守</div><div class="ca-v"><b>${DEF_SCHEMES[recDef].icon}${DEF_SCHEMES[recDef].name}</b> <span>— ${reasonDef(recDef, oppOff)}</span></div></div>` +
+      `<div class="ca-row"><div class="ca-k">主场</div><div class="ca-v"><span>${homeTip}</span></div></div>` +
+      `<div class="ca-row"><div class="ca-k">轮换</div><div class="ca-v"><span>${sub}</span></div></div>` +
+    `</div>`;
 }
 
 function setMyScheme(kind, key) {
@@ -1151,6 +1287,8 @@ function renderSubs() {
   court.innerHTML = ""; bench.innerHTML = "";
   onCourtArr(my).forEach((p) => court.appendChild(playerChip(p, true)));
   benchArr(my).forEach((p) => bench.appendChild(playerChip(p, false)));
+  const adviceEl = $("sub-advice");
+  if (adviceEl) adviceEl.innerHTML = `💡 ${getSubSuggestion(my, bestCounterOff(S.scheme[S.oppTeam].def))}`;
   const hintEl = $("sub-hint");
   if (!S.subWindow) {
     hintEl.textContent = "🔒 比赛进行中不能换人 —— 叫暂停或等节间休息";
@@ -1163,6 +1301,15 @@ function renderSubs() {
   }
 }
 
+function playerStatusTag(p, onCourt) {
+  if (p.stamina < 35) return { text: "⚠ 该休息", cls: "danger" };
+  if ((p.heat || 0) >= 30) return { text: "🔥 手热", cls: "hot" };
+  if ((p.heat || 0) <= -25) return { text: "🧊 低迷", cls: "cool" };
+  if (!onCourt && p.stamina >= 82) return { text: p.thr >= 0.45 ? "🎯 可上投射" : "✅ 可上", cls: "ready" };
+  if (p.stamina < 55) return { text: "注意体力", cls: "warn" };
+  return { text: onCourt ? "状态正常" : "等待轮换", cls: "flat" };
+}
+
 function playerChip(p, onCourt) {
   const d = document.createElement("button");
   const sel = S.subSel && S.subSel.id === p.id;
@@ -1171,10 +1318,12 @@ function playerChip(p, onCourt) {
   const glow = ht.c === "hot" ? " hot-glow" : (ht.c === "cold" ? " cold-glow" : "");
   d.className = "pl-chip" + (onCourt ? " on" : " bench") + (sel ? " sel" : "") + (locked ? " locked" : "") + glow;
   const col = p.stamina > 60 ? "var(--green)" : (p.stamina > 32 ? "#e8b53a" : "var(--red)");
+  const tag = playerStatusTag(p, onCourt);
   d.innerHTML =
     `<div class="pl-top"><span class="pl-pos">${p.pos}</span><span class="pl-nm">${p.name}${p.star ? " ★" : ""}</span>` +
     `<span class="heat-tag ${ht.c}" id="heat-${p.id}">${ht.t}</span></div>` +
     `<div class="pl-stat">${p.st ? p.st.pts : 0}分 ${p.st ? p.st.oreb + p.st.dreb : 0}板 ${p.st ? p.st.ast : 0}助</div>` +
+    `<div class="pl-role ${tag.cls}">${tag.text}</div>` +
     `<div class="stam-bar"><i id="stam-${p.id}" style="width:${p.stamina}%;background:${col}"></i></div>` +
     `<div class="stam-num">体力 ${Math.round(p.stamina)}</div>`;
   d.onclick = () => onChipClick(p, onCourt);
@@ -1401,9 +1550,9 @@ function clutchTeammate(primary, preferThree) {
 }
 function recordClutchShot(team, p, isThree, made) {
   const pts = isThree ? 3 : 2;
-  p.st.fga++; if (isThree) p.st.tpa++;
-  if (made) { p.st.fgm++; if (isThree) p.st.tpm++; p.st.pts += pts; addScore(team, pts); }
-  return pts;
+    p.st.fga++; if (isThree) p.st.tpa++;
+    if (made) { p.st.fgm++; if (isThree) p.st.tpm++; p.st.pts += pts; addScore(team, pts); nudgeCrowd(team, isThree ? 5 : 3, team === S.homeTeam ? "clutch" : "awayRun", team === S.homeTeam ? 0.65 : 0.45); }
+    return pts;
 }
 function askClutchPlay() {
   const tier = getClutchTier();
@@ -1444,6 +1593,7 @@ function resolveClutch(opt) {
   noteCoachAction("关键战术选择");
   const p = opt.p, pack = opt.pack, def = S.oppTeam;
   const tier = S.clutchTier || 2;
+  homeCrowdText("clutch", {}, 0.75);
   const preDiff = S.score[S.myTeam] - S.score[def];
   const defender = pickByWeight(onCourtArr(def), (d) => d.def + (styleOf(d).blk || 1) * 12 + (styleOf(d).stl || 1) * 10);
   pushFeed(S.myTeam, `📋 关键回合选择【${packLabel(pack)}】，${p.name}是第一触发点。`, { team: S.myTeam, big: true });
