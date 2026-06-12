@@ -315,8 +315,22 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
 @media (max-width:640px){
   #app{ align-items:stretch; justify-content:flex-start; padding:8px; padding-bottom:calc(8px + env(safe-area-inset-bottom)); }
   .screen{ max-width:none; }
-  .screen:not(#screen-game){ min-height:100%; justify-content:center; }
-  .teams{ gap:12px; } .tcard{ width:88vw; max-width:340px; }
+  .screen:not(#screen-game){ min-height:100%; max-height:100%; justify-content:flex-start; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:10px 0; }
+  #screen-select{ justify-content:flex-start; }
+  #screen-select .title{ font-size:21px; margin:4px 0 5px; line-height:1.2; }
+  #screen-select .sub{ font-size:12px; line-height:1.45; margin-bottom:10px; padding:0 6px; }
+  .teams{ width:100%; gap:8px; flex-direction:column; align-items:center; flex-wrap:nowrap; }
+  .tcard{ width:94vw; max-width:360px; padding:12px 14px; border-radius:12px; }
+  .tlogo{ width:38px; height:38px; margin-bottom:7px; font-size:13px; }
+  .tcard h3{ font-size:17px; margin-bottom:3px; }
+  .tline{ font-size:12px; margin-bottom:4px; }
+  .tstory{ font-size:12px; line-height:1.45; min-height:0; }
+  .diff{ font-size:10px; padding:2px 7px; margin:5px 0; }
+  .pick-team{ margin-top:7px; padding:10px 14px; font-size:14px; }
+  #screen-series .title{ font-size:22px; }
+  .series-board{ padding:14px 24px; gap:20px; margin:10px 0; }
+  .sb-w{ font-size:34px; }
+  .series-line{ font-size:13px; line-height:1.55; margin-bottom:14px; }
 
   .scoreboard{ padding:8px 10px; gap:8px; border-radius:12px; }
   .sc-team{ padding:4px 3px; }
