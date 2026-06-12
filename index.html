@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>决战麦迪逊 · 2026 NBA总决赛</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+
+    <!-- ===== 标题页 ===== -->
+    <section id="screen-title" class="screen active">
+      <div class="title-bg"></div>
+      <div class="title-inner">
+        <div class="badge">2026 NBA FINALS</div>
+        <h1 class="game-title">决战麦迪逊</h1>
+        <p class="subtitle">GARDEN SHOWDOWN · 改写总决赛结局</p>
+
+        <div class="news-card">
+          <div class="news-tag">本周热点 · 6月10日 G4</div>
+          <p>尼克斯第三节落后 <b>29分</b>，最终 <b>107-106</b> 完成总决赛史上最大逆转，<b>系列赛 3-1 领先马刺</b>。阿奴诺比绝杀补篮，布伦森砍下36分。</p>
+          <p class="news-sub">G5 周六 @ 圣安东尼奥 — 你的故事从这里开始。</p>
+        </div>
+
+        <button class="btn btn-primary" id="btn-start">开始比赛</button>
+        <p class="hint">PC：鼠标点击 / 手机：触摸点击</p>
+      </div>
+    </section>
+
+    <!-- ===== 选队页 ===== -->
+    <section id="screen-select" class="screen">
+      <h2 class="screen-h2">选择你要执教的球队</h2>
+      <p class="screen-desc">当前系列赛比分 <b>尼克斯 3 - 1 马刺</b>。胜者率先抢下第 4 胜即夺冠。</p>
+      <div class="team-cards">
+        <div class="team-card knicks" data-team="knicks">
+          <div class="team-logo">NY</div>
+          <h3>纽约尼克斯</h3>
+          <div class="team-line orange">领先 3-1 · 只差 1 胜封王</div>
+          <p class="team-story">终结 53 年总冠军荒。把对手按在地上，别给他们任何机会。</p>
+          <div class="diff diff-normal">难度：普通</div>
+          <ul class="roster">
+            <li><span>布伦森</span><i>关键先生 · 进攻97</i></li>
+            <li><span>阿奴诺比</span><i>攻防一体 · 防守98</i></li>
+            <li><span>唐斯</span><i>内线核心 · 进攻90</i></li>
+            <li><span>布里奇斯</span><i>3D射手 · 88</i></li>
+          </ul>
+          <button class="btn btn-pick">执教尼克斯</button>
+        </div>
+
+        <div class="team-card spurs" data-team="spurs">
+          <div class="team-logo">SA</div>
+          <h3>圣安东尼奥马刺</h3>
+          <div class="team-line silver">落后 1-3 · 须连胜 3 场</div>
+          <p class="team-story">复仇G4的崩盘。完成惊天逆转横扫，写下属于文班的传奇。</p>
+          <div class="diff diff-hard">难度：地狱</div>
+          <ul class="roster">
+            <li><span>文班亚马</span><i>超级新星 · 综合99</i></li>
+            <li><span>福克斯</span><i>极速后卫 · 进攻92</i></li>
+            <li><span>哈珀</span><i>潜力新秀 · 87</i></li>
+            <li><span>瓦塞尔</span><i>侧翼射手 · 85</i></li>
+          </ul>
+          <button class="btn btn-pick">执教马刺</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 系列赛/赛前页 ===== -->
+    <section id="screen-series" class="screen">
+      <h2 class="screen-h2" id="series-title">系列赛进程</h2>
+      <div class="series-board">
+        <div class="series-team">
+          <div class="s-logo knicks-bg">NY</div>
+          <div class="s-name">尼克斯</div>
+          <div class="s-wins" id="series-knicks-wins">3</div>
+        </div>
+        <div class="series-vs">VS</div>
+        <div class="series-team">
+          <div class="s-logo spurs-bg">SA</div>
+          <div class="s-name">马刺</div>
+          <div class="s-wins" id="series-spurs-wins">1</div>
+        </div>
+      </div>
+      <div class="games-strip" id="games-strip"></div>
+      <div class="next-game" id="next-game-info"></div>
+      <button class="btn btn-primary" id="btn-tipoff">开打这一场</button>
+    </section>
+
+    <!-- ===== 比赛页 ===== -->
+    <section id="screen-game" class="screen">
+      <div class="scoreboard">
+        <div class="sb-team" id="sb-left">
+          <div class="sb-name">尼克斯</div>
+          <div class="sb-score" id="score-knicks">0</div>
+        </div>
+        <div class="sb-mid">
+          <div class="sb-game" id="sb-game-label">G5</div>
+          <div class="sb-poss" id="sb-poss">回合 1 / 8</div>
+        </div>
+        <div class="sb-team" id="sb-right">
+          <div class="sb-name">马刺</div>
+          <div class="sb-score" id="score-spurs">0</div>
+        </div>
+      </div>
+
+      <div class="momentum-wrap">
+        <div class="momentum-label">气势</div>
+        <div class="momentum-bar"><div class="momentum-fill" id="momentum-fill"></div></div>
+      </div>
+
+      <div class="court">
+        <div class="action-banner" id="action-banner">进攻回合</div>
+        <div class="log" id="game-log"></div>
+
+        <!-- 进攻选择 -->
+        <div class="offense-panel" id="offense-panel">
+          <p class="panel-hint">选择本回合的出手球员：</p>
+          <div class="player-options" id="player-options"></div>
+        </div>
+
+        <!-- 防守提示 -->
+        <div class="defense-panel" id="defense-panel">
+          <p class="panel-hint" id="defense-hint">对手出手中——抓准时机封盖！</p>
+        </div>
+
+        <!-- 时机条 -->
+        <div class="timing-wrap" id="timing-wrap">
+          <div class="timing-info" id="timing-info"></div>
+          <div class="timing-bar">
+            <div class="timing-zone" id="timing-zone"></div>
+            <div class="timing-perfect" id="timing-perfect"></div>
+            <div class="timing-marker" id="timing-marker"></div>
+          </div>
+          <button class="btn btn-action" id="btn-timing">出手！</button>
+        </div>
+
+        <button class="btn btn-primary hidden" id="btn-continue">继续</button>
+      </div>
+    </section>
+
+    <!-- ===== 单场结果页 ===== -->
+    <section id="screen-result" class="screen">
+      <h2 class="screen-h2" id="result-title">本场结束</h2>
+      <div class="result-score" id="result-score">107 - 106</div>
+      <p class="result-text" id="result-text"></p>
+      <button class="btn btn-primary" id="btn-next-game">下一步</button>
+    </section>
+
+    <!-- ===== 结局页 ===== -->
+    <section id="screen-end" class="screen">
+      <div class="end-inner">
+        <div class="trophy" id="end-emoji">🏆</div>
+        <h1 class="end-title" id="end-title">总冠军！</h1>
+        <p class="end-text" id="end-text"></p>
+        <button class="btn btn-primary" id="btn-restart">再来一次</button>
+      </div>
+    </section>
+
+  </div>
+  <script src="game.js"></script>
+</body>
+</html>
