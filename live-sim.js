@@ -42,7 +42,8 @@ const S = {
   resumeLabel: "▶ 继续比赛",
   subCountdown: 0,       // 布置倒计时（真实秒）
   subTimer: null,        // 倒计时句柄
-  timeouts: { knicks: 7, spurs: 7 },  // 暂停次数（节间不消耗，主动叫暂停消耗）
+  timeouts: { knicks: 7, spurs: 7 },  // NBA规则：常规时间7次；第四节最多保留4次；最后3分钟最多2次；加时每队2次
+  timeoutRuleFlags: {},  // 记录第四节/加时暂停规则是否已触发，避免重复提示
   oppTOQ: 0,             // 对手本节已叫暂停次数（限频）
   run: { team: null, pts: 0 },        // 连续得分流（一波流追踪）
   rotationDone: {},      // 已执行的固定轮换窗口，避免连续死球反复换
@@ -475,6 +476,7 @@ function startGame() {
   clearInterval(S.subTimer);
   S.subCountdown = 0;
   S.timeouts = { knicks: 7, spurs: 7 };
+  S.timeoutRuleFlags = {};
   S.oppTOQ = 0;
   S.run = { team: null, pts: 0 };
   S.rotationDone = {};
@@ -596,6 +598,49 @@ function updatePauseCountdown() {
   if (label) label.textContent = S.subBy ? "暂停布置倒计时" : "节间/加时布置倒计时";
 }
 
+function capTimeouts(max, reason) {
+  const changed = [];
+  ["knicks", "spurs"].forEach((t) => {
+    if (S.timeouts[t] > max) {
+      S.timeouts[t] = max;
+      changed.push(ROSTERS[t].short);
+    }
+  });
+  if (changed.length && reason) pushFeed("system", reason, { mini: true });
+  updateTimeoutInfo();
+  return changed.length > 0;
+}
+
+function applyTimeoutRules() {
+  if (!S.timeouts || S.gameOver) return;
+  if (!S.timeoutRuleFlags) S.timeoutRuleFlags = {};
+  if (S.quarter === 4) {
+    if (!S.timeoutRuleFlags.q4Cap) {
+      S.timeoutRuleFlags.q4Cap = true;
+      capTimeouts(4, "📘 NBA暂停规则：进入第四节，每队最多只能保留 4 次暂停，多余暂停自动失效。");
+    }
+    if (S.clock <= 180 && !S.timeoutRuleFlags.q4Last3) {
+      S.timeoutRuleFlags.q4Last3 = true;
+      capTimeouts(2, "📘 NBA暂停规则：第四节最后 3 分钟，每队最多只能保留 2 次暂停，不能把暂停一路囤到最后。");
+    }
+  } else if (S.quarter > 4) {
+    const key = `ot${S.quarter}`;
+    if (!S.timeoutRuleFlags[key]) {
+      S.timeoutRuleFlags[key] = true;
+      S.timeouts = { knicks: 2, spurs: 2 };
+      pushFeed("system", "📘 NBA加时规则：进入加时赛，每队获得 2 次暂停，常规时间剩余暂停不继续囤积。", { mini: true });
+      updateTimeoutInfo();
+    }
+  }
+}
+
+function timeoutStageText() {
+  if (S.quarter > 4) return "加时2";
+  if (S.quarter === 4 && S.clock <= 180) return "末3限2";
+  if (S.quarter === 4) return "Q4限4";
+  return "常规7";
+}
+
 // 「叫暂停 / 继续」按钮
 function togglePause() {
   if (S.gameOver) return;
@@ -604,6 +649,7 @@ function togglePause() {
     closeSubWindow();
   } else {
     // 比赛进行中 → 主动叫暂停（消耗 1 次）
+    applyTimeoutRules();
     if (S.timeouts[S.myTeam] <= 0) {
       pushFeed("system", "⚠ 暂停次数已用完，只能等节间休息再调整阵容。");
       return;
@@ -626,6 +672,7 @@ function togglePause() {
 
 /* 对手 AI 是否主动叫暂停：被打一波 or 落后较多，每节最多 2 次、概率触发 */
 function maybeOppTimeout() {
+  applyTimeoutRules();
   const opp = S.oppTeam;
   if (S.timeouts[opp] <= 0 || S.oppTOQ >= 2) return false;
   const diff = S.score[opp] - S.score[S.myTeam];          // 对手视角分差
@@ -673,6 +720,7 @@ function advanceAfterPossession(clutch) {
   dt = Math.min(dt, S.clock > 0 ? S.clock : dt);
   ["knicks", "spurs"].forEach((t) => onCourtArr(t).forEach((p) => (p.st.sec += dt)));
   S.clock -= dt;
+  applyTimeoutRules();
 
   tickStamina();
   maybeAutoRotationWindow();
@@ -691,6 +739,7 @@ function handleClockExpired() {
     if (S.score.knicks === S.score.spurs) {
       S.quarter++; S.clock = 300; // 加时 5:00
       S.oppTOQ = 0;
+      applyTimeoutRules();
       aiThink(true);
       autoRotate("knicks", true, "加时前批量轮换"); autoRotate("spurs", true, "加时前批量轮换");
       openSubWindow(`⏱ 战平！进入加时赛！可调整阵容与战术（30秒布置时间），点「开始加时」开打。`, "▶ 开始加时", 30, null);
@@ -699,6 +748,7 @@ function handleClockExpired() {
   } else {
     S.quarter++; S.clock = QUARTER_SECONDS;
     S.oppTOQ = 0;
+    applyTimeoutRules();
     aiThink(true);
     autoRotate("knicks", true, "节间批量轮换"); autoRotate("spurs", true, "节间批量轮换");
     openSubWindow(`—— 节间休息 —— 第 ${S.quarter} 节即将开始，可调整阵容与战术（30秒布置时间），点「开始第${S.quarter}节」开打。`, `▶ 开始第${S.quarter}节`, 30, null);
@@ -1414,7 +1464,7 @@ function updateTimeoutInfo() {
   const el = $("timeout-info");
   if (!el || !S.myTeam) return;
   const n = S.timeouts[S.myTeam];
-  el.textContent = `暂停 我${n}·对${S.timeouts[S.oppTeam]}`;
+  el.textContent = `暂停 我${n}·对${S.timeouts[S.oppTeam]}｜${timeoutStageText()}`;
   el.classList.toggle("none", n <= 0);
 }
 
