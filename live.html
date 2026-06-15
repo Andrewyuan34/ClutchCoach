@@ -123,6 +123,17 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
 .do-label{ display:block; font-weight:800; font-size:15px; margin-bottom:4px; }
 .do-desc{ display:block; font-size:12px; color:#9aa5b1; line-height:1.5; }
 
+.crisis-bar{ width:100%; margin-top:10px; padding:14px; border-radius:14px;
+  background:linear-gradient(135deg,#20130f,#141923); border:1px solid rgba(255,120,66,.68);
+  box-shadow:0 0 24px rgba(232,68,58,.18); animation:pop .25s ease; }
+.crisis-title{ font-size:16px; font-weight:1000; text-align:center; color:#ffb24d; }
+.crisis-meta{ text-align:center; font-size:12px; color:#cfd7df; line-height:1.5; margin:5px 0 12px; }
+.crisis-opts{ display:flex; gap:10px; flex-wrap:wrap; }
+.crisis-opt{ flex:1; min-width:150px; cursor:pointer; text-align:left; color:#eef2f6;
+  background:rgba(255,255,255,.05); border:1px solid var(--line); border-radius:12px; padding:11px 12px; transition:.12s; }
+.crisis-opt:hover{ background:rgba(245,132,38,.16); border-color:var(--ny-a); transform:translateY(-2px); }
+.crisis-opt .co-name{ font-size:14px; }
+
 /* 关键球·最后一攻 决策栏 */
 .clutch-bar{ width:100%; margin-top:10px; padding:14px;
   background:linear-gradient(135deg,#2a1410,#181016);
@@ -465,10 +476,10 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
   .speed-wrap{ gap:6px; font-size:12px; min-width:0; }
   .speed-label{ font-size:11px; min-width:24px; }
 
-  .decision-bar,.clutch-bar{ margin-top:7px; padding:10px; max-height:38vh; overflow-y:auto; -webkit-overflow-scrolling:touch; }
-  .decision-title,.clutch-bar-title{ font-size:14px; }
-  .decision-opts,.clutch-opts{ gap:7px; }
-  .decision-opt{ min-width:100%; padding:9px; }
+  .decision-bar,.crisis-bar,.clutch-bar{ margin-top:7px; padding:10px; max-height:38vh; overflow-y:auto; -webkit-overflow-scrolling:touch; }
+  .decision-title,.crisis-title,.clutch-bar-title{ font-size:14px; }
+  .decision-opts,.crisis-opts,.clutch-opts{ gap:7px; }
+  .decision-opt,.crisis-opt{ min-width:100%; padding:9px; }
   .clutch-opt{ min-width:100%; padding:9px; }
   .co-name{ font-size:14px; }
   .co-play{ font-size:12px; }
@@ -622,6 +633,12 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
       <div class="decision-opts" id="decision-opts"></div>
     </div>
 
+    <div class="crisis-bar hidden" id="crisis-bar">
+      <div class="crisis-title" id="crisis-title">场边决断</div>
+      <div class="crisis-meta" id="crisis-meta"></div>
+      <div class="crisis-opts" id="crisis-opts"></div>
+    </div>
+
     <!-- 关键球·最后一攻 决策 -->
     <div class="clutch-bar hidden" id="clutch-bar">
       <div class="clutch-bar-title" id="clutch-title"></div>
@@ -652,7 +669,7 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
 <!-- 赛前任命卡 -->
 <div class="coach-modal hidden" id="coach-intro-modal">
   <div class="coach-card">
-    <div class="coach-kicker">HEAD COACH ASSIGNMENT</div>
+    <div class="coach-kicker">教练任命</div>
     <div class="coach-title" id="coach-intro-title">你是主教练</div>
     <div class="coach-body" id="coach-intro-body"></div>
     <div class="coach-task-card">
@@ -662,7 +679,7 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
     </div>
     <div class="coach-actions">
       <button class="btn btn-primary" id="coach-intro-start">开始执教</button>
-      <button class="btn btn-ghost" id="coach-intro-tutorial">10秒上手</button>
+      <button class="btn btn-ghost hidden" id="coach-intro-tutorial">重开助教模式</button>
     </div>
   </div>
 </div>
@@ -676,7 +693,6 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
     <div class="tutorial-dots" id="tutorial-dots"></div>
     <div class="coach-actions">
       <button class="btn btn-primary" id="tutorial-next">下一步</button>
-      <button class="btn btn-ghost" id="tutorial-skip">跳过，直接开打</button>
     </div>
   </div>
 </div>

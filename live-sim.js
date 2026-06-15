@@ -67,6 +67,9 @@ const S = {
   assistantStep: "",
   assistantTarget: null,
   assistantSubPlan: null,
+  crisisPending: false,    // 正式比赛的「场边决断」
+  crisisLastTick: -99,
+  crisisGamble: null,
 };
 
 const QUARTERS = 4;
@@ -110,6 +113,7 @@ function startApp() {
   $("btn-pause").onclick = togglePause;
   if ($("post-btn-next")) $("post-btn-next").onclick = afterGameNext;
   if ($("post-btn-restart")) $("post-btn-restart").onclick = () => location.reload();
+  if ($("crisis-bar")) $("crisis-bar").classList.add("hidden");
   $("speed-range").oninput = (e) => {
     S.speed = 2800 - Number(e.target.value);
     updateSpeedLabel();
@@ -120,13 +124,9 @@ function startApp() {
   $("tab-box").onclick = () => setView("box");
   $("tab-cmd").onclick = () => setView("cmd");
   if ($("coach-prompt")) $("coach-prompt").onclick = () => openCoachPrompt();
-  if ($("coach-intro-start")) $("coach-intro-start").onclick = () => startCoachIntro(false, false);
-  if ($("coach-intro-tutorial")) $("coach-intro-tutorial").onclick = () => {
-    const done = assistantTutorialDone();
-    startCoachIntro(done, !done);
-  };
+  if ($("coach-intro-start")) $("coach-intro-start").onclick = () => startCoachIntro(false);
+  if ($("coach-intro-tutorial")) $("coach-intro-tutorial").onclick = () => startCoachIntro(true);
   if ($("tutorial-next")) $("tutorial-next").onclick = () => onAssistantNext();
-  if ($("tutorial-skip")) $("tutorial-skip").onclick = () => skipAssistantTutorial();
   setupBoxScrollLock();
   showScreen("select");
 }
@@ -348,6 +348,7 @@ function setupHomeCourt() {
 function makeCoachStats() {
   return {
     actions: 0, schemeSwitches: 0, subs: 0, timeouts: 0, clutchChoices: 0, promptOpens: 0,
+    crisisDecisions: 0, crisisTimeouts: 0, crisisShouts: 0, crisisGambles: 0, crisisGambleWins: 0,
     effects: 0, positiveEffects: 0, maxMyRun: 0, maxOppRun: 0, bestLead: 0, worstDeficit: 0,
     firstActionTick: null,
   };
@@ -415,22 +416,16 @@ function showCoachIntro() {
   $("coach-intro-task-desc").textContent = S.coachTask.desc;
   const done = assistantTutorialDone();
   $("coach-intro-start").textContent = done ? "开始执教" : "开启助教模式";
-  $("coach-intro-tutorial").textContent = done ? "重开助教模式" : "我会玩，直接开打";
-  $("coach-intro-tutorial").classList.remove("hidden");
+  $("coach-intro-tutorial").textContent = "重开助教模式";
+  $("coach-intro-tutorial").classList.toggle("hidden", !done);
   modal.classList.remove("hidden");
   updateScoreboard();
 }
 
-function startCoachIntro(forceTutorial, skipTutorial) {
+function startCoachIntro(forceTutorial) {
   const modal = $("coach-intro-modal");
   if (modal) modal.classList.add("hidden");
   S.coachIntroOpen = false;
-  if (skipTutorial) {
-    storeSet(ASSISTANT_KEY, "1");
-    S.assistantMode = false;
-    beginGamePlayback();
-    return;
-  }
   if (forceTutorial || !assistantTutorialDone()) startAssistantTutorial();
   else beginGamePlayback();
 }
@@ -456,7 +451,7 @@ function showAssistantStep(step) {
   S.assistantStep = step;
   clearTimeout(S.timer);
   const total = 6;
-  let title = "助教模式", body = "", target = "", btn = "继续", skip = "跳过助教模式", docked = true, topDock = false;
+  let title = "助教模式", body = "", target = "", btn = "继续", docked = true, topDock = false;
 
   if (step === ASSISTANT_STEPS.SITUATION) {
     docked = false; target = "situation-line"; btn = "明白，看局势";
@@ -495,8 +490,6 @@ function showAssistantStep(step) {
   $("tutorial-next").textContent = btn;
   $("tutorial-next").disabled = step === ASSISTANT_STEPS.SCHEME || step === ASSISTANT_STEPS.TIMEOUT || step === ASSISTANT_STEPS.SUB;
   $("tutorial-next").classList.toggle("hidden", step === ASSISTANT_STEPS.SCHEME || step === ASSISTANT_STEPS.TIMEOUT || step === ASSISTANT_STEPS.SUB);
-  $("tutorial-skip").textContent = skip;
-  $("tutorial-skip").classList.toggle("hidden", step === ASSISTANT_STEPS.FINISH);
   $("tutorial-dots").innerHTML = Array.from({ length: total }, (_, i) => `<i class="${i < assistantStepIndex(step) ? "on" : ""}"></i>`).join("");
   clearAssistantHighlights();
   if (step === ASSISTANT_STEPS.SCHEME) renderCmd();
@@ -528,15 +521,6 @@ function onAssistantNext() {
   } else if (S.assistantStep === ASSISTANT_STEPS.FINISH) {
     finishAssistantTutorial();
   }
-}
-
-function skipAssistantTutorial() {
-  storeSet(ASSISTANT_KEY, "1");
-  S.assistantMode = false;
-  S.assistantStep = "";
-  hideAssistantModal();
-  if (!S.openingStarted) beginGamePlayback();
-  else if (!S.running && !S.subWindow && !S.decisionPending && !S.gameOver) { S.running = true; scheduleNext(S.speed); }
 }
 
 function finishAssistantTutorial() {
@@ -604,6 +588,12 @@ function startGame() {
   S.assistantStep = "";
   S.assistantTarget = null;
   S.assistantSubPlan = null;
+  S.crisisPending = false;
+  S.crisisLastTick = -99;
+  S.crisisGamble = null;
+  if ($("crisis-bar")) $("crisis-bar").classList.add("hidden");
+  if ($("decision-bar")) $("decision-bar").classList.add("hidden");
+  if ($("clutch-bar")) $("clutch-bar").classList.add("hidden");
   // 两队开局战术 = 各自真实战术身份（尼克斯传导/弹性，马刺快攻/护框）
   S.scheme = {
     knicks: { off: TEAM_TACTICS.knicks.defaultOff, def: TEAM_TACTICS.knicks.defaultDef },
@@ -748,33 +738,37 @@ function timeoutStageText() {
   return "常规7";
 }
 
+function requestPlayerTimeout(fromCrisis = false) {
+  applyTimeoutRules();
+  if (S.timeouts[S.myTeam] <= 0) {
+    pushFeed("system", "⚠ 暂停次数已用完，只能等节间休息再调整阵容。");
+    return false;
+  }
+  S.timeouts[S.myTeam]--;
+  updateTimeoutInfo();
+  addMomentum(S.myTeam, 7);
+  S.refFrustration[S.myTeam] = Math.max(0, (S.refFrustration[S.myTeam] || 0) - 8);
+  if (S.myTeam === S.awayTeam) S.crowdHeat = clamp(S.crowdHeat - 5, 0, 30);
+  else S.crowdHeat = clamp(S.crowdHeat + 2, 0, 30);
+  homeCrowdText("timeout", {}, 0.65);
+  liftHeat(S.myTeam, 8);
+  S.run = { team: null, pts: 0 };
+  noteCoachAction("暂停布置");
+  if (fromCrisis && S.coachStats) S.coachStats.crisisTimeouts++;
+  markCoachEffect("timeout", "叫暂停重新布置", "打断对手一波流，给体力和情绪一个回稳窗口");
+  autoRotate(S.oppTeam, true, "暂停批量轮换");
+  openSubWindow(`📣 ${ROSTERS[S.myTeam].name} 请求暂停！士气回稳，可调整战术与阵容（${20}秒布置时间）。`, "▶ 继续比赛", 20, S.myTeam);
+  assistantAfterTimeout();
+  return true;
+}
+
 // 「叫暂停 / 继续」按钮
 function togglePause() {
   if (S.gameOver) return;
-  if (S.subWindow || !S.running) {
-    // 当前在调整窗口（或已暂停）→ 继续比赛
+  if (S.subWindow || (!S.running && !S.crisisPending)) {
     closeSubWindow();
-  } else {
-    // 比赛进行中 → 主动叫暂停（消耗 1 次）
-    applyTimeoutRules();
-    if (S.timeouts[S.myTeam] <= 0) {
-      pushFeed("system", "⚠ 暂停次数已用完，只能等节间休息再调整阵容。");
-      return;
-    }
-    S.timeouts[S.myTeam]--;
-    updateTimeoutInfo();
-    addMomentum(S.myTeam, 7);          // 叫暂停稳住军心，回一点士气
-    S.refFrustration[S.myTeam] = Math.max(0, (S.refFrustration[S.myTeam] || 0) - 8);
-    if (S.myTeam === S.awayTeam) S.crowdHeat = clamp(S.crowdHeat - 5, 0, 30);
-    else S.crowdHeat = clamp(S.crowdHeat + 2, 0, 30);
-    homeCrowdText("timeout", {}, 0.65);
-    liftHeat(S.myTeam, 8);             // 在场球员士气小幅回暖
-    S.run = { team: null, pts: 0 };
-    noteCoachAction("暂停布置");
-    markCoachEffect("timeout", "叫暂停重新布置", "打断对手一波流，给体力和情绪一个回稳窗口");
-    autoRotate(S.oppTeam, true, "暂停批量轮换");   // 对手也趁暂停批量轮换疲劳球员
-    openSubWindow(`📣 ${ROSTERS[S.myTeam].name} 请求暂停！士气回稳，可调整战术与阵容（${20}秒布置时间）。`, "▶ 继续比赛", 20, S.myTeam);
-    assistantAfterTimeout();
+  } else if (!S.crisisPending) {
+    requestPlayerTimeout(false);
   }
 }
 
@@ -837,10 +831,12 @@ function advanceAfterPossession(clutch) {
   updateScoreboard();
 
   if (S.clock <= 0) return handleClockExpired();
+  resolveCrisisGamble();
   if (!clutch && maybeOppTimeout()) return;   // 比赛中段：对手 AI 可能叫暂停
   if (!clutch) {
     maybeTriggerAssistantTutorial();
     if (!S.running || S.tutorialOpen) return;
+    if (maybeTriggerCrisisDecision()) return;
   }
   scheduleNext();
 }
@@ -1536,6 +1532,107 @@ function assistantAfterSub(outId, inId) {
   S.assistantStep = ASSISTANT_STEPS.FINISH;
   S.assistantSubPlan = null;
   setTimeout(() => showAssistantStep(ASSISTANT_STEPS.FINISH), 260);
+}
+
+function crisisReason() {
+  if (!S.myTeam || S.assistantMode || S.subWindow || S.tutorialOpen || S.decisionPending || S.gameOver) return null;
+  if (S.tickCount - S.crisisLastTick < 10) return null;
+  const oppRun = S.run.team === S.oppTeam ? S.run.pts : 0;
+  const court = onCourtArr(S.myTeam);
+  const coreTired = court.find((p) => p.star && p.stamina < 30);
+  const lateClose = S.quarter >= 4 && S.clock <= 180 && Math.abs(S.score[S.myTeam] - S.score[S.oppTeam]) <= 6;
+  if (oppRun >= 10) return `对手打出 ${oppRun}-0，现场节奏已经偏过去了。`;
+  if (coreTired) return `${coreTired.name}体力快见底了，还在硬撑。`;
+  if (lateClose && oppRun >= 5) return `最后三分钟，${ROSTERS[S.oppTeam].name}刚把压力打出来。`;
+  return null;
+}
+
+function maybeTriggerCrisisDecision() {
+  const reason = crisisReason();
+  if (!reason) return false;
+  S.crisisPending = true;
+  S.decisionPending = true;
+  S.running = false;
+  S.crisisLastTick = S.tickCount;
+  clearTimeout(S.timer);
+  showCrisisDecision(reason);
+  return true;
+}
+
+function showCrisisDecision(reason) {
+  const bar = $("crisis-bar"), title = $("crisis-title"), meta = $("crisis-meta"), opts = $("crisis-opts");
+  if (!bar || !title || !meta || !opts) return;
+  title.textContent = "场边决断";
+  meta.textContent = `${reason} 你得给球队一个回应。`;
+  opts.innerHTML = "";
+  const choices = [
+    { key: "timeout", label: "叫暂停止血", desc: "消耗暂停，稳住情绪，解锁换人和完整布置。" },
+    { key: "shout", label: "场边喊话", desc: "不消耗暂停，小幅回稳，但不能换人。" },
+    { key: "hold", label: "硬扛相信球员", desc: "不消耗暂停。打回来很提气，继续崩会更伤。" },
+  ];
+  choices.forEach((c) => {
+    const b = document.createElement("button");
+    b.className = "crisis-opt";
+    b.innerHTML = `<div class="co-top"><span class="co-name">${c.label}</span></div><div class="co-note">${c.desc}</div>`;
+    b.onclick = () => resolveCrisisDecision(c.key);
+    opts.appendChild(b);
+  });
+  bar.classList.remove("hidden");
+}
+
+function closeCrisisDecision() {
+  const bar = $("crisis-bar");
+  if (bar) bar.classList.add("hidden");
+  S.crisisPending = false;
+  S.decisionPending = false;
+}
+
+function resolveCrisisDecision(key) {
+  if (!S.crisisPending) return;
+  if (S.coachStats) S.coachStats.crisisDecisions++;
+  if (key === "timeout") {
+    closeCrisisDecision();
+    requestPlayerTimeout(true);
+    return;
+  }
+  if (key === "shout") {
+    if (S.coachStats) S.coachStats.crisisShouts++;
+    addMomentum(S.myTeam, 3);
+    liftHeat(S.myTeam, 3);
+    if (S.run.team === S.oppTeam) S.run.pts = Math.max(0, Math.floor(S.run.pts * 0.55));
+    pushFeed(S.myTeam, `🗣️ 主教练在场边连续喊话，示意稳住第一传。`, { team: S.myTeam, big: true });
+    markCoachEffect("crisis", "场边喊话稳住", "不花暂停，先把情绪压回来，但阵容还得继续扛" );
+    closeCrisisDecision();
+    S.running = true;
+    scheduleNext(700);
+    return;
+  }
+  if (S.coachStats) S.coachStats.crisisGambles++;
+  S.crisisGamble = { atTick: S.tickCount, myScore: S.score[S.myTeam], oppScore: S.score[S.oppTeam] };
+  pushFeed(S.myTeam, `🧊 你没有叫停，选择相信场上五人自己打回来。`, { team: S.myTeam, big: true });
+  markCoachEffect("crisis", "硬扛相信球员", "下一波打成会很提气，继续丢分会更伤" );
+  closeCrisisDecision();
+  S.running = true;
+  scheduleNext(700);
+}
+
+function resolveCrisisGamble() {
+  const g = S.crisisGamble;
+  if (!g || S.tickCount <= g.atTick + 1 || S.gameOver) return;
+  const myGain = S.score[S.myTeam] - g.myScore;
+  const oppGain = S.score[S.oppTeam] - g.oppScore;
+  if (myGain > oppGain) {
+    if (S.coachStats) S.coachStats.crisisGambleWins++;
+    addMomentum(S.myTeam, 8);
+    liftHeat(S.myTeam, 7);
+    pushFeed(S.myTeam, "✅ 你选择硬扛，场上球员把回应打出来了，替补席重新站起来。", { team: S.myTeam, mini: true, coachResult: true });
+  } else {
+    addMomentum(S.oppTeam, 6);
+    S.targetLevel = Math.min(8, S.targetLevel + 1);
+    frustrateTeam(S.myTeam, 4);
+    pushFeed(S.myTeam, "⚠️ 硬扛没有撑住，场上压力继续扩大，下一次要更果断。", { team: S.myTeam, mini: true, coachResult: true });
+  }
+  S.crisisGamble = null;
 }
 
 function markCoachEffect(type, title, impact) {
@@ -2335,6 +2432,8 @@ function renderCoachGrade(iWon) {
       `<span class="grade-pill">暂停 ${st.timeouts}</span>` +
       `<span class="grade-pill">换人 ${st.subs}</span>` +
       `<span class="grade-pill">关键 ${st.clutchChoices}</span>` +
+      `<span class="grade-pill">决断 ${st.crisisDecisions}</span>` +
+      `<span class="grade-pill">硬扛 ${st.crisisGambleWins}/${st.crisisGambles}</span>` +
       `<span class="grade-pill">兑现 ${st.positiveEffects}/${st.effects}</span>` +
       `<span class="grade-pill">最大一波 ${st.maxMyRun}-0</span>` +
       `<span class="grade-pill">被打一波 ${st.maxOppRun}-0</span>` +
