@@ -220,6 +220,9 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
 /* 教练任命卡 / 首局引导 */
 .coach-modal{ position:fixed; inset:0; z-index:9000; display:flex; align-items:center; justify-content:center;
   padding:18px; background:rgba(5,8,12,.72); backdrop-filter:blur(6px); }
+.coach-modal.coach-docked{ align-items:flex-end; justify-content:center; pointer-events:none; background:linear-gradient(180deg,rgba(5,8,12,.18),rgba(5,8,12,.62)); }
+.coach-modal.coach-docked.coach-top{ align-items:flex-start; }
+.coach-modal.coach-docked .coach-card{ pointer-events:auto; }
 .coach-card{ width:min(560px,100%); border-radius:18px; padding:20px;
   background:linear-gradient(135deg,rgba(245,132,38,.18),rgba(22,28,36,.98));
   border:1px solid rgba(245,132,38,.5); box-shadow:0 24px 70px rgba(0,0,0,.45); text-align:left; animation:pop .25s ease; }
@@ -237,6 +240,9 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
 .tutorial-dots{ display:flex; gap:5px; margin-top:10px; }
 .tutorial-dots i{ display:block; width:8px; height:8px; border-radius:50%; background:rgba(255,255,255,.18); }
 .tutorial-dots i.on{ background:var(--ny-a); box-shadow:0 0 12px rgba(245,132,38,.65); }
+.tutorial-required{ position:relative; z-index:9101 !important; box-shadow:0 0 0 2px rgba(255,207,106,.95), 0 0 28px rgba(245,132,38,.55) !important; animation:tutPulse .8s ease infinite alternate; }
+@keyframes tutPulse{ from{ filter:brightness(1); } to{ filter:brightness(1.18); } }
+.coach-actions .btn:disabled{ opacity:.55; cursor:not-allowed; transform:none; }
 
 /* 实时数据 box score */
 .pause-countdown{ width:100%; margin-bottom:12px; padding:13px 14px; border-radius:14px;

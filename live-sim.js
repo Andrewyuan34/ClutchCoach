@@ -63,6 +63,10 @@ const S = {
   coachTaskResult: null,
   coachStats: null,
   openingStarted: false,
+  assistantMode: false,    // 助教模式：首局手把手强引导
+  assistantStep: "",
+  assistantTarget: null,
+  assistantSubPlan: null,
 };
 
 const QUARTERS = 4;
@@ -118,11 +122,11 @@ function startApp() {
   if ($("coach-prompt")) $("coach-prompt").onclick = () => openCoachPrompt();
   if ($("coach-intro-start")) $("coach-intro-start").onclick = () => startCoachIntro(false, false);
   if ($("coach-intro-tutorial")) $("coach-intro-tutorial").onclick = () => {
-    const done = storeGet("finalsCoachTutorialDone") === "1";
+    const done = assistantTutorialDone();
     startCoachIntro(done, !done);
   };
-  if ($("tutorial-next")) $("tutorial-next").onclick = () => nextTutorialStep();
-  if ($("tutorial-skip")) $("tutorial-skip").onclick = () => finishTutorial();
+  if ($("tutorial-next")) $("tutorial-next").onclick = () => onAssistantNext();
+  if ($("tutorial-skip")) $("tutorial-skip").onclick = () => skipAssistantTutorial();
   setupBoxScrollLock();
   showScreen("select");
 }
@@ -250,6 +254,7 @@ function applySub(team, outId, inId, byCoach, opt = {}) {
   }
   if (byCoach && team === S.myTeam) {
     markCoachEffect("sub", `${inP.name}换下${outP.name}`, `${outP.name}不用硬撑，${inP.name}带着体力上来补这一段`);
+    assistantAfterSub(outId, inId);
   }
   return { inP, outP };
 }
@@ -379,11 +384,21 @@ function renderCoachTask() {
   desc.textContent = S.coachTask.desc;
 }
 
-const TUTORIAL_STEPS = [
-  { target: "situation-line", view: "feed", title: "第一眼看局势", body: "比分下面这句话会把复杂数值翻译成人话：顺风、拉锯、警报。你不用先懂所有系统，先看它判断危险。" },
-  { target: "tab-cmd", view: "feed", title: "红点就是该你出手", body: "当对手打出一波流、球员体力见红、最后关键时刻，指挥台会亮红点。点提示带会直接带你去该处理的位置。" },
-  { target: "coach-advice", view: "cmd", title: "操作一定有反馈", body: "调战术、换人、叫暂停后，直播里会立刻出现教练因果反馈；过一两个回合还会告诉你有没有兑现。" },
-];
+const ASSISTANT_KEY = "clutchCoachAssistantDone";
+const ASSISTANT_STEPS = {
+  SITUATION: "situation",
+  WAIT_DANGER: "waitDanger",
+  ENTER_CMD: "enterCmd",
+  SCHEME: "scheme",
+  WAIT_TIMEOUT: "waitTimeout",
+  TIMEOUT: "timeout",
+  SUB: "sub",
+  FINISH: "finish",
+};
+
+function assistantTutorialDone() {
+  return storeGet(ASSISTANT_KEY) === "1";
+}
 
 function showCoachIntro() {
   const modal = $("coach-intro-modal");
@@ -394,13 +409,13 @@ function showCoachIntro() {
   const my = ROSTERS[S.myTeam], opp = ROSTERS[S.oppTeam];
   $("coach-intro-title").textContent = `你是 ${my.name} 主教练`;
   $("coach-intro-body").innerHTML =
-    `这一场你不是观众。你要读局势、调战术、管轮换、抓关键球。<br>` +
-    `对手是 <b>${opp.name}</b>，地点是 <b>${S.arena}</b>。比分由球员打，比赛方向由你的决定改变。`;
+    `这一场你不是观众。你不用控制每次投篮。<br>` +
+    `你要做的是：<b>看局势、叫暂停、调战术、管轮换、抓关键球</b>。对手是 <b>${opp.name}</b>，地点是 <b>${S.arena}</b>。`;
   $("coach-intro-task-name").textContent = S.coachTask.name;
   $("coach-intro-task-desc").textContent = S.coachTask.desc;
-  const tutorialDone = storeGet("finalsCoachTutorialDone") === "1";
-  $("coach-intro-start").textContent = tutorialDone ? "开始执教" : "开始 10 秒上手";
-  $("coach-intro-tutorial").textContent = tutorialDone ? "重看上手" : "跳过教学直接开打";
+  const done = assistantTutorialDone();
+  $("coach-intro-start").textContent = done ? "开始执教" : "开启助教模式";
+  $("coach-intro-tutorial").textContent = done ? "重开助教模式" : "我会玩，直接开打";
   $("coach-intro-tutorial").classList.remove("hidden");
   modal.classList.remove("hidden");
   updateScoreboard();
@@ -410,42 +425,130 @@ function startCoachIntro(forceTutorial, skipTutorial) {
   const modal = $("coach-intro-modal");
   if (modal) modal.classList.add("hidden");
   S.coachIntroOpen = false;
-  const tutorialDone = storeGet("finalsCoachTutorialDone") === "1";
-  if (skipTutorial) storeSet("finalsCoachTutorialDone", "1");
-  const needTutorial = forceTutorial || (!skipTutorial && !tutorialDone);
-  if (needTutorial) showTutorial(0);
+  if (skipTutorial) {
+    storeSet(ASSISTANT_KEY, "1");
+    S.assistantMode = false;
+    beginGamePlayback();
+    return;
+  }
+  if (forceTutorial || !assistantTutorialDone()) startAssistantTutorial();
   else beginGamePlayback();
 }
 
-function showTutorial(idx) {
+function startAssistantTutorial() {
+  S.assistantMode = true;
+  S.assistantStep = ASSISTANT_STEPS.SITUATION;
+  S.assistantTarget = null;
+  S.assistantSubPlan = null;
+  setView("feed");
+  showAssistantStep(ASSISTANT_STEPS.SITUATION);
+}
+
+function assistantStepIndex(step) {
+  const order = [ASSISTANT_STEPS.SITUATION, ASSISTANT_STEPS.ENTER_CMD, ASSISTANT_STEPS.SCHEME, ASSISTANT_STEPS.TIMEOUT, ASSISTANT_STEPS.SUB, ASSISTANT_STEPS.FINISH];
+  return Math.max(0, order.indexOf(step)) + 1;
+}
+
+function showAssistantStep(step) {
+  const modal = $("coach-tutorial-modal");
+  if (!modal) return;
   S.tutorialOpen = true;
-  S.running = false;
+  S.assistantStep = step;
   clearTimeout(S.timer);
-  S.tutorialIndex = idx;
-  const step = TUTORIAL_STEPS[idx];
-  setView(step.view);
-  $("coach-tutorial-modal").classList.remove("hidden");
-  $("tutorial-step").textContent = `${idx + 1} / ${TUTORIAL_STEPS.length}`;
-  $("tutorial-title").textContent = step.title;
-  $("tutorial-body").textContent = step.body;
-  $("tutorial-next").textContent = idx === TUTORIAL_STEPS.length - 1 ? "开始比赛" : "下一步";
-  $("tutorial-dots").innerHTML = TUTORIAL_STEPS.map((_, i) => `<i class="${i === idx ? "on" : ""}"></i>`).join("");
-  setTimeout(() => focusCoachArea(step.target), 40);
+  const total = 6;
+  let title = "助教模式", body = "", target = "", btn = "继续", skip = "跳过助教模式", docked = true, topDock = false;
+
+  if (step === ASSISTANT_STEPS.SITUATION) {
+    docked = false; target = "situation-line"; btn = "明白，看局势";
+    title = "第一眼先看局势";
+    body = "比分下面这句话会把复杂局势翻译成人话：顺风、拉锯、警报。你不需要先懂所有数值，先看它判断现在危不危险。";
+  } else if (step === ASSISTANT_STEPS.ENTER_CMD) {
+    docked = true; target = "tab-cmd"; btn = "进指挥台";
+    title = "红点就是该你出手";
+    body = "助教：现在不是干看着的时候。当这里亮红点，说明比赛出现了需要主教练处理的信号。只在新手局强制一次，之后你可以忽略。";
+  } else if (step === ASSISTANT_STEPS.SCHEME) {
+    docked = true; target = "coach-advice"; btn = "点击高亮战术继续";
+    title = "第一次调战术";
+    body = "这里不是复杂菜单，这是你的教练席。助教会给建议，但不是命令。现在请点击高亮的建议战术，看看直播怎么反馈你的决定。";
+    setupAssistantSchemeTarget();
+  } else if (step === ASSISTANT_STEPS.TIMEOUT) {
+    docked = true; topDock = true; target = "btn-pause"; btn = "点击高亮暂停按钮";
+    title = "第一次叫暂停";
+    body = "现在适合叫暂停。暂停不是拖时间按钮，它能打断对手一波流、稳住情绪，并给你换人和调战术窗口。请点击高亮的暂停按钮。";
+  } else if (step === ASSISTANT_STEPS.SUB) {
+    docked = true; target = "sub-advice"; btn = "按高亮完成换人";
+    title = "第一次换人";
+    body = "暂停期间可以安全换人。体力会影响命中率、防守和失误。请先点高亮的场上球员，再点高亮替补。";
+    setupAssistantSubPlan();
+  } else if (step === ASSISTANT_STEPS.FINISH) {
+    docked = false; target = "situation-line"; btn = "交给我吧";
+    title = "可以了，教练";
+    body = "你已经会最重要的事：看局势、进指挥台、调战术、叫暂停、换人。接下来我只在危险时提醒，不再强制操作。";
+  }
+
+  modal.classList.toggle("coach-docked", docked);
+  modal.classList.toggle("coach-top", topDock);
+  modal.classList.remove("hidden");
+  $("tutorial-step").textContent = `${assistantStepIndex(step)} / ${total}`;
+  $("tutorial-title").textContent = title;
+  $("tutorial-body").textContent = body;
+  $("tutorial-next").textContent = btn;
+  $("tutorial-next").disabled = step === ASSISTANT_STEPS.SCHEME || step === ASSISTANT_STEPS.TIMEOUT || step === ASSISTANT_STEPS.SUB;
+  $("tutorial-next").classList.toggle("hidden", step === ASSISTANT_STEPS.SCHEME || step === ASSISTANT_STEPS.TIMEOUT || step === ASSISTANT_STEPS.SUB);
+  $("tutorial-skip").textContent = skip;
+  $("tutorial-skip").classList.toggle("hidden", step === ASSISTANT_STEPS.FINISH);
+  $("tutorial-dots").innerHTML = Array.from({ length: total }, (_, i) => `<i class="${i < assistantStepIndex(step) ? "on" : ""}"></i>`).join("");
+  clearAssistantHighlights();
+  if (step === ASSISTANT_STEPS.SCHEME) renderCmd();
+  if (step === ASSISTANT_STEPS.SUB) renderSubs();
+  if (target && step !== ASSISTANT_STEPS.SCHEME && step !== ASSISTANT_STEPS.SUB) {
+    const el = $(target);
+    if (el) el.classList.add("tutorial-required");
+  }
+  if (target) setTimeout(() => focusCoachArea(target), 60);
 }
 
-function nextTutorialStep() {
-  if (S.tutorialIndex >= TUTORIAL_STEPS.length - 1) return finishTutorial();
-  showTutorial(S.tutorialIndex + 1);
-}
-
-function finishTutorial() {
+function hideAssistantModal() {
   const modal = $("coach-tutorial-modal");
   if (modal) modal.classList.add("hidden");
   S.tutorialOpen = false;
-  storeSet("finalsCoachTutorialDone", "1");
-  setView("feed");
-  beginGamePlayback();
+  clearAssistantHighlights();
 }
+
+function onAssistantNext() {
+  if (!S.assistantMode && S.assistantStep !== ASSISTANT_STEPS.FINISH) return hideAssistantModal();
+  if (S.assistantStep === ASSISTANT_STEPS.SITUATION) {
+    hideAssistantModal();
+    S.assistantStep = ASSISTANT_STEPS.WAIT_DANGER;
+    beginGamePlayback();
+  } else if (S.assistantStep === ASSISTANT_STEPS.ENTER_CMD) {
+    clearCoachPrompt();
+    setView("cmd");
+    showAssistantStep(ASSISTANT_STEPS.SCHEME);
+  } else if (S.assistantStep === ASSISTANT_STEPS.FINISH) {
+    finishAssistantTutorial();
+  }
+}
+
+function skipAssistantTutorial() {
+  storeSet(ASSISTANT_KEY, "1");
+  S.assistantMode = false;
+  S.assistantStep = "";
+  hideAssistantModal();
+  if (!S.openingStarted) beginGamePlayback();
+  else if (!S.running && !S.subWindow && !S.decisionPending && !S.gameOver) { S.running = true; scheduleNext(S.speed); }
+}
+
+function finishAssistantTutorial() {
+  storeSet(ASSISTANT_KEY, "1");
+  S.assistantMode = false;
+  S.assistantStep = "";
+  S.assistantTarget = null;
+  S.assistantSubPlan = null;
+  hideAssistantModal();
+  setView(S.subWindow ? "cmd" : "feed");
+}
+
 
 function beginGamePlayback() {
   if (S.gameOver) return;
@@ -497,6 +600,10 @@ function startGame() {
   S.coachStats = makeCoachStats();
   S.coachTask = buildCoachTask();
   S.openingStarted = false;
+  S.assistantMode = false;
+  S.assistantStep = "";
+  S.assistantTarget = null;
+  S.assistantSubPlan = null;
   // 两队开局战术 = 各自真实战术身份（尼克斯传导/弹性，马刺快攻/护框）
   S.scheme = {
     knicks: { off: TEAM_TACTICS.knicks.defaultOff, def: TEAM_TACTICS.knicks.defaultDef },
@@ -667,6 +774,7 @@ function togglePause() {
     markCoachEffect("timeout", "叫暂停重新布置", "打断对手一波流，给体力和情绪一个回稳窗口");
     autoRotate(S.oppTeam, true, "暂停批量轮换");   // 对手也趁暂停批量轮换疲劳球员
     openSubWindow(`📣 ${ROSTERS[S.myTeam].name} 请求暂停！士气回稳，可调整战术与阵容（${20}秒布置时间）。`, "▶ 继续比赛", 20, S.myTeam);
+    assistantAfterTimeout();
   }
 }
 
@@ -730,6 +838,10 @@ function advanceAfterPossession(clutch) {
 
   if (S.clock <= 0) return handleClockExpired();
   if (!clutch && maybeOppTimeout()) return;   // 比赛中段：对手 AI 可能叫暂停
+  if (!clutch) {
+    maybeTriggerAssistantTutorial();
+    if (!S.running || S.tutorialOpen) return;
+  }
   scheduleNext();
 }
 
@@ -1330,6 +1442,9 @@ function openCoachPrompt() {
   setView("cmd");
   setTimeout(() => focusCoachArea(focus), 30);
   clearCoachPrompt();
+  if (S.assistantMode && S.assistantStep === ASSISTANT_STEPS.ENTER_CMD) {
+    setTimeout(() => showAssistantStep(ASSISTANT_STEPS.SCHEME), 80);
+  }
 }
 
 function focusCoachArea(id) {
@@ -1338,6 +1453,89 @@ function focusCoachArea(id) {
   el.classList.add("coach-focus");
   el.scrollIntoView({ block: "center", behavior: "smooth" });
   setTimeout(() => el.classList.remove("coach-focus"), 1400);
+}
+
+function clearAssistantHighlights() {
+  document.querySelectorAll(".tutorial-required").forEach((el) => el.classList.remove("tutorial-required"));
+}
+
+function setupAssistantSchemeTarget() {
+  if (!S.myTeam) return;
+  const opp = S.oppTeam;
+  const recOff = bestCounterOff(S.scheme[opp].def);
+  const recDef = bestCounterDef(S.scheme[opp].off);
+  let target = null;
+  if (S.scheme[S.myTeam].off !== recOff) target = { kind: "off", key: recOff };
+  else if (S.scheme[S.myTeam].def !== recDef) target = { kind: "def", key: recDef };
+  else {
+    const alt = Object.keys(OFF_SCHEMES).find((k) => k !== S.scheme[S.myTeam].off) || "motion";
+    target = { kind: "off", key: alt };
+  }
+  S.assistantTarget = target;
+  renderCmd();
+}
+
+function assistantAfterScheme(kind, key) {
+  if (!S.assistantMode || S.assistantStep !== ASSISTANT_STEPS.SCHEME) return;
+  if (!S.assistantTarget || S.assistantTarget.kind !== kind || S.assistantTarget.key !== key) return;
+  hideAssistantModal();
+  pushFeed("system", "🧑‍💼 助教：很好。现在等比赛给你反馈；下一次真正需要止血时，我会带你叫一次暂停。", { mini: true });
+  S.assistantStep = ASSISTANT_STEPS.WAIT_TIMEOUT;
+  S.assistantTarget = { triggerTick: S.tickCount + 4 };
+  setView("feed");
+  S.running = true;
+  scheduleNext(900);
+}
+
+function maybeTriggerAssistantTutorial() {
+  if (!S.assistantMode || S.gameOver || S.decisionPending || S.tutorialOpen) return;
+  if (S.assistantStep !== ASSISTANT_STEPS.WAIT_DANGER && S.assistantStep !== ASSISTANT_STEPS.WAIT_TIMEOUT) return;
+  const oppRun = S.run.team === S.oppTeam ? S.run.pts : 0;
+  const court = onCourtArr(S.myTeam);
+  const tired = court.some((p) => p.stamina < 45);
+  const cold = court.some((p) => (p.heat || 0) <= -25);
+  if (S.assistantStep === ASSISTANT_STEPS.WAIT_DANGER) {
+    if (oppRun >= 6 || tired || cold || S.tickCount >= 4) {
+      S.running = false;
+      clearTimeout(S.timer);
+      S.coachPrompt = { type: "assistant", text: oppRun >= 6 ? `助教：对手打出 ${oppRun}-0，进指挥台处理一下` : "助教：现在出现了需要处理的信号，进指挥台看看", focus: "coach-advice" };
+      renderCoachPrompt();
+      showAssistantStep(ASSISTANT_STEPS.ENTER_CMD);
+    }
+  } else if (S.assistantStep === ASSISTANT_STEPS.WAIT_TIMEOUT) {
+    const due = S.assistantTarget && S.tickCount >= S.assistantTarget.triggerTick;
+    if (oppRun >= 8 || tired || cold || due) {
+      clearTimeout(S.timer);
+      showAssistantStep(ASSISTANT_STEPS.TIMEOUT);
+    }
+  }
+}
+
+function setupAssistantSubPlan() {
+  if (!S.myTeam) return;
+  if (!S.assistantSubPlan || !isOnCourt(S.myTeam, S.assistantSubPlan.outId) || isOnCourt(S.myTeam, S.assistantSubPlan.inId)) {
+    const out = onCourtArr(S.myTeam).slice().sort((a, b) => (a.stamina + (a.heat || 0) * 0.12) - (b.stamina + (b.heat || 0) * 0.12))[0];
+    const bench = benchArr(S.myTeam).slice().sort((a, b) => (b.stamina + b.off * 0.12 + b.def * 0.1) - (a.stamina + a.off * 0.12 + a.def * 0.1))[0];
+    if (out && bench) S.assistantSubPlan = { outId: out.id, inId: bench.id };
+  }
+  renderSubs();
+}
+
+function assistantAfterTimeout() {
+  if (!S.assistantMode || S.assistantStep !== ASSISTANT_STEPS.TIMEOUT) return;
+  S.assistantStep = ASSISTANT_STEPS.SUB;
+  S.subCountdown = Math.max(S.subCountdown, 45);
+  updatePauseBtn();
+  setTimeout(() => showAssistantStep(ASSISTANT_STEPS.SUB), 80);
+}
+
+function assistantAfterSub(outId, inId) {
+  if (!S.assistantMode || S.assistantStep !== ASSISTANT_STEPS.SUB) return;
+  const plan = S.assistantSubPlan;
+  if (plan && (plan.outId !== outId || plan.inId !== inId)) return;
+  S.assistantStep = ASSISTANT_STEPS.FINISH;
+  S.assistantSubPlan = null;
+  setTimeout(() => showAssistantStep(ASSISTANT_STEPS.FINISH), 260);
 }
 
 function markCoachEffect(type, title, impact) {
@@ -1531,10 +1729,17 @@ function renderCmd() {
 function schemeBtn(key, info, kind, recKey) {
   const b = document.createElement("button");
   const active = S.scheme[S.myTeam][kind] === key;
-  b.className = "sch-btn" + (active ? " active" : "") + (key === recKey ? " rec" : "");
+  const required = S.assistantMode && S.assistantStep === ASSISTANT_STEPS.SCHEME && S.assistantTarget && S.assistantTarget.kind === kind && S.assistantTarget.key === key;
+  b.className = "sch-btn" + (active ? " active" : "") + (key === recKey ? " rec" : "") + (required ? " tutorial-required" : "");
   b.innerHTML = `<span class="sch-name">${info.icon} ${info.name}</span>` +
                 `<span class="sch-desc">${schemeShort(kind, key)}</span>`;
-  b.onclick = () => setMyScheme(kind, key);
+  b.onclick = () => {
+    if (S.assistantMode && S.assistantStep === ASSISTANT_STEPS.SCHEME && S.assistantTarget && !required) {
+      focusCoachArea(S.assistantTarget.kind === "off" ? "my-off" : "my-def");
+      return;
+    }
+    setMyScheme(kind, key);
+  };
   return b;
 }
 
@@ -1625,6 +1830,7 @@ function setMyScheme(kind, key) {
     else if (m < -0.04) pushFeed(S.myTeam, SCHEME_FLAVOR.counterBad, { team: S.myTeam, mini: true });
   }
   renderCmd();
+  assistantAfterScheme(kind, key);
 }
 
 // 球队气势对比 + 个人手感速览（布置战术时参考）
@@ -1692,7 +1898,9 @@ function playerChip(p, onCourt) {
   const locked = !S.subWindow;
   const ht = heatTag(p);
   const glow = ht.c === "hot" ? " hot-glow" : (ht.c === "cold" ? " cold-glow" : "");
-  d.className = "pl-chip" + (onCourt ? " on" : " bench") + (sel ? " sel" : "") + (locked ? " locked" : "") + glow;
+  const tutPlan = S.assistantMode && S.assistantStep === ASSISTANT_STEPS.SUB && S.assistantSubPlan;
+  const tut = tutPlan && ((onCourt && p.id === S.assistantSubPlan.outId) || (!onCourt && p.id === S.assistantSubPlan.inId)) ? " tutorial-required" : "";
+  d.className = "pl-chip" + (onCourt ? " on" : " bench") + (sel ? " sel" : "") + (locked ? " locked" : "") + glow + tut;
   const col = p.stamina > 60 ? "var(--green)" : (p.stamina > 32 ? "#e8b53a" : "var(--red)");
   const tag = playerStatusTag(p, onCourt);
   d.innerHTML =
@@ -1709,6 +1917,10 @@ function playerChip(p, onCourt) {
 function onChipClick(p, onCourt) {
   if (!S.subWindow) return;   // 非窗口期锁定换人
   const my = S.myTeam;
+  if (S.assistantMode && S.assistantStep === ASSISTANT_STEPS.SUB && S.assistantSubPlan) {
+    if (onCourt && p.id !== S.assistantSubPlan.outId) { focusCoachArea("sub-court"); return; }
+    if (!onCourt && p.id !== S.assistantSubPlan.inId) { focusCoachArea("sub-bench"); return; }
+  }
   if (onCourt) {
     S.subSel = S.subSel && S.subSel.id === p.id ? null : { team: my, id: p.id };
   } else {
