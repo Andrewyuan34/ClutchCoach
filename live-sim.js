@@ -70,6 +70,7 @@ const S = {
   crisisPending: false,    // 正式比赛的「场边决断」
   crisisLastTick: -99,
   crisisGamble: null,
+  rookieArc: null,         // 第一局教学剧情：操作有明显反馈，最后收到关键球
 };
 
 const QUARTERS = 4;
@@ -353,6 +354,61 @@ function setupHomeCourt() {
   S.crowdHeat = 8;
 }
 
+function makeRookieArc() {
+  return {
+    enabled: S.gameNo === 5,
+    spark: 0,
+    sparkNoted: false,
+    finalArmed: false,
+    finalUsed: false,
+    noActionSet: false,
+  };
+}
+function rookieArcOn() { return !!(S.rookieArc && S.rookieArc.enabled); }
+function rookieActions() { return S.coachStats ? S.coachStats.actions : 0; }
+function rookieMakeMod(team) {
+  if (!rookieArcOn()) return 0;
+  if (team === S.myTeam) return rookieActions() > 0 ? 0.042 + S.rookieArc.spark * 0.003 : -0.018;
+  return rookieActions() > 0 ? -0.022 : 0.018;
+}
+function rookieTurnoverMod(team) {
+  if (!rookieArcOn()) return 0;
+  if (team === S.myTeam) return rookieActions() > 0 ? -0.018 : 0.026;
+  return rookieActions() > 0 ? 0.012 : -0.006;
+}
+function noteRookieSpark(label) {
+  if (!rookieArcOn() || !S.coachStats || S.coachStats.actions > 4) return;
+  S.rookieArc.spark = 5;
+  S.boost[S.myTeam] += 12;
+  addMomentum(S.myTeam, 5);
+  if (!S.rookieArc.sparkNoted) {
+    S.rookieArc.sparkNoted = true;
+    pushFeed("system", `场边这一声很快有了反应：${label}之后，场上五个人明显稳了一拍。`, { mini: true });
+  }
+}
+function updateRookieArc() {
+  if (!rookieArcOn() || S.gameOver || S.quarter < 4) return;
+  if (S.rookieArc.spark > 0) S.rookieArc.spark--;
+  const my = S.myTeam, opp = S.oppTeam;
+  if (!S.rookieArc.noActionSet && rookieActions() === 0 && S.clock <= 90) {
+    S.rookieArc.noActionSet = true;
+    S.score[opp] = Math.max(S.score[opp], S.score[my] + 6);
+    S.possessionTeam = opp;
+    pushFeed("system", "你一直没叫停，比赛被对面拖进他们的节奏。现在想救，已经很难了。", { big: true });
+    updateScoreboard();
+    return;
+  }
+  if (!S.rookieArc.finalArmed && rookieActions() > 0 && S.clock <= 45) {
+    S.rookieArc.finalArmed = true;
+    S.score[my] = Math.max(0, S.score[opp] - 1);
+    S.clock = 8;
+    S.possessionTeam = my;
+    S.run = { team: null, pts: 0 };
+    pushFeed("system", `最后 8 秒，${ROSTERS[my].name}落后 1 分。前面那些调整，把比赛拖到了这一球。`, { big: true });
+    updateScoreboard();
+  }
+}
+
 function makeCoachStats() {
   return {
     actions: 0, schemeSwitches: 0, subs: 0, timeouts: 0, clutchChoices: 0, promptOpens: 0,
@@ -605,6 +661,7 @@ function startGame() {
   S.crisisPending = false;
   S.crisisLastTick = -99;
   S.crisisGamble = null;
+  S.rookieArc = makeRookieArc();
   if ($("crisis-bar")) $("crisis-bar").classList.add("hidden");
   if ($("decision-bar")) $("decision-bar").classList.add("hidden");
   if ($("clutch-bar")) $("clutch-bar").classList.add("hidden");
@@ -839,6 +896,7 @@ function advanceAfterPossession(clutch) {
   applyTimeoutRules();
 
   tickStamina();
+  updateRookieArc();
   maybeAutoRotationWindow();
   if (!clutch) updateCoachTargeting();
   resolvePendingCoachEffect();
@@ -900,6 +958,7 @@ function runPossession() {
   if (oSch === "motion") toRate -= 0.03;
   if (dSch === "press" && oSch === "pace") toRate += 0.03;   // 紧逼克快攻
   toRate += (S.refFrustration[off] || 0) * 0.0012;           // 被争议哨/漏判影响后更容易急躁失误
+  toRate += rookieTurnoverMod(off);                          // 第一局：不管会乱，管了立刻稳
   toRate += awayNoisePenalty(off);                           // 客队在高声浪下沟通更困难
   toRate -= clutchAftershockMod(off) * 0.012;                // 关键球余震：自信方更稳，受挫方更慌
   toRate += (1 - staminaFactor(shooter)) * 0.32;             // 体力差会明显增加失误
@@ -955,6 +1014,7 @@ function runPossession() {
   make += S.boost[off] * 0.0011;
   make -= (defPressure(def) - 72) * 0.0045;          // 防守压力(中心化)增强，总决赛强度更硬
   make += matchup;                                   // 战术克制
+  make += rookieMakeMod(off);                        // 第一局：操作后变化更明显
   make += isThree ? dbase.make3 : (isRim ? dbase.makeRim : dbase.makeMid);
   make += isStar ? dbase.star : dbase.other;         // 包夹影响
   make -= (S.refFrustration[off] || 0) * 0.0009;     // 心态波动会让终结质量略降
@@ -1257,6 +1317,7 @@ function noteCoachAction(label) {
   if (wasTargeted) {
     pushFeed(S.myTeam, `📋 ${label}奏效：及时变招打乱了对手预判，被针对状态解除。`, { team: S.myTeam, mini: true });
   }
+  noteRookieSpark(label);
 }
 
 // 个人气势：±调整、每回合衰减、暂停回暖
@@ -2236,7 +2297,10 @@ function pickClutchOptions() {
     { pack: "team", p: hub, title: CLUTCH_PACKS.team.label, note: CLUTCH_PACKS.team.note, risk: CLUTCH_PACKS.team.risk },
     { pack: "gamble", p: gambler, title: CLUTCH_PACKS.gamble.label, note: CLUTCH_PACKS.gamble.note, risk: CLUTCH_PACKS.gamble.risk },
   ].filter((o) => o.p);
-  raw.forEach((o) => (o.chance = clutchScore(o.p, o.pack)));
+  raw.forEach((o) => {
+    o.chance = clutchScore(o.p, o.pack);
+    if (rookieArcOn() && S.rookieArc.finalArmed && !S.rookieArc.finalUsed) o.chance = Math.max(o.chance, 0.76);
+  });
   return raw;
 }
 function clutchPick(rows) {
@@ -2301,7 +2365,10 @@ function resolveClutch(opt) {
   markCoachEffect("clutch", `关键球选择【${packLabel(pack)}】`, `${p.name}成为第一触发点，成败会直接写进下一段直播`);
 
   let outcome;
-  if (pack === "star") {
+  if (rookieArcOn() && S.rookieArc.finalArmed && !S.rookieArc.finalUsed) {
+    S.rookieArc.finalUsed = true;
+    outcome = pack === "team" ? "teamMake" : (pack === "gamble" ? "gambleThree" : "heroMake");
+  } else if (pack === "star") {
     outcome = clutchPick([
       { k: "heroMake", w: 34 * opt.chance }, { k: "kickout", w: 12 }, { k: "foul", w: 12 },
       { k: "blocked", w: 7 }, { k: "turnover", w: 8 + (S.refFrustration[S.myTeam] || 0) * 0.4 },
@@ -2338,6 +2405,7 @@ function resolveClutch(opt) {
     setClutchAftershock(S.myTeam, 1.1, 4, "关键命中");
     overlayKind = "win"; overlayBig = leadTxt === "反超" ? "反 超！" : leadTxt === "绝平" ? "绝 平！" : "进 了！";
     overlaySub = `${scorer.name}关键${pts}分 · ${rand(CLUTCH_FLAVOR)}`;
+    if (rookieArcOn() && S.rookieArc.finalUsed) overlaySub = `${scorer.name}把第一场写成你的决定`;
   } else if (outcome === "foul" || outcome === "foulGame") {
     pushFeed(S.myTeam, `🧨 ${p.name}强突制造身体接触，裁判响哨！${defender.name}犯规。`, { team: S.myTeam, big: true });
     defender.st.pf++; S.fouls[def]++;
