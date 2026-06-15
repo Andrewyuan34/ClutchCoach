@@ -99,6 +99,24 @@ function setAppHeight() {
   const h = vv && vv.height ? vv.height : window.innerHeight;
   document.documentElement.style.setProperty("--app-height", `${Math.round(h)}px`);
 }
+
+function blockAssistantWrongView(view) {
+  if (!S.assistantMode || !S.tutorialOpen) return false;
+  if (S.assistantStep === ASSISTANT_STEPS.SITUATION && view !== "feed") {
+    focusCoachArea("situation-line");
+    return true;
+  }
+  if (S.assistantStep === ASSISTANT_STEPS.ENTER_CMD && view !== "cmd") {
+    focusCoachArea("tab-cmd");
+    return true;
+  }
+  if ((S.assistantStep === ASSISTANT_STEPS.SCHEME || S.assistantStep === ASSISTANT_STEPS.SUB) && view !== "cmd") {
+    focusCoachArea(S.assistantStep === ASSISTANT_STEPS.SCHEME ? "coach-advice" : "sub-advice");
+    return true;
+  }
+  return false;
+}
+
 function startApp() {
   setAppHeight();
   window.addEventListener("resize", setAppHeight);
@@ -128,9 +146,13 @@ function startApp() {
     // 即时生效：正在自动播放时立刻按新速度重排定时器（否则要等当前那条跑完）
     if (S.running && !S.decisionPending && !S.subWindow) scheduleNext(S.speed);
   };
-  $("tab-feed").onclick = () => setView("feed");
-  $("tab-box").onclick = () => setView("box");
-  $("tab-cmd").onclick = () => setView("cmd");
+  $("tab-feed").onclick = () => { if (!blockAssistantWrongView("feed")) setView("feed"); };
+  $("tab-box").onclick = () => { if (!blockAssistantWrongView("box")) setView("box"); };
+  $("tab-cmd").onclick = () => {
+    if (blockAssistantWrongView("cmd")) return;
+    setView("cmd");
+    onAssistantGameUiClick("tab-cmd");
+  };
   if ($("coach-prompt")) $("coach-prompt").onclick = () => openCoachPrompt();
   if ($("situation-line")) $("situation-line").onclick = () => onAssistantGameUiClick("situation-line");
   if ($("coach-intro-start")) $("coach-intro-start").onclick = () => startCoachIntro(false);
@@ -535,7 +557,7 @@ function showAssistantStep(step) {
     title = "第一次叫暂停";
     body = "现在适合叫暂停。暂停不是拖时间按钮，它能打断对手一波流、稳住情绪，并给你换人和调战术窗口。请点击高亮的暂停按钮。";
   } else if (step === ASSISTANT_STEPS.SUB) {
-    docked = true; target = "sub-advice"; btn = "按高亮完成换人";
+    docked = true; topDock = true; target = "sub-advice"; btn = "按高亮完成换人";
     title = "第一次换人";
     body = "暂停期间可以安全换人。体力会影响命中率、防守和失误。请先点高亮的场上球员，再点高亮替补。";
     setupAssistantSubPlan();
