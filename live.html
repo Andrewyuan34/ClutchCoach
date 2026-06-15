@@ -59,9 +59,20 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
 .sc-q{ font-size:13px; color:#9aa5b1; } .sc-clock{ font-size:20px; font-weight:800; font-variant-numeric:tabular-nums; }
 .dot{ font-size:11px;color:#6b7682; }
 
-.mom{ width:100%; display:flex; height:6px; border-radius:4px; overflow:hidden; margin:8px 0 10px; background:rgba(255,255,255,.06); }
+.mom{ width:100%; display:flex; height:6px; border-radius:4px; overflow:hidden; margin:8px 0 7px; background:rgba(255,255,255,.06); }
 #mom-knicks{ background:var(--ny-a); transition:width .5s; }
 #mom-spurs{ background:var(--sa); transition:width .5s; }
+.situation-line{ width:100%; border:1px solid var(--line); border-radius:10px; padding:7px 10px; margin-bottom:7px;
+  font-size:12px; font-weight:800; text-align:left; color:#cfd7df; background:rgba(255,255,255,.04); transition:.2s; }
+.situation-line.good{ color:#74e08a; border-color:rgba(46,194,107,.3); background:rgba(46,194,107,.09); }
+.situation-line.neutral{ color:#ffcf6a; border-color:rgba(245,180,40,.28); background:rgba(245,180,40,.08); }
+.situation-line.danger{ color:#ff8b82; border-color:rgba(232,68,58,.42); background:rgba(232,68,58,.12); box-shadow:0 0 18px rgba(232,68,58,.14); }
+.coach-prompt{ width:100%; display:flex; align-items:center; justify-content:space-between; gap:10px; border:1px solid rgba(232,68,58,.55);
+  border-radius:12px; padding:9px 11px; margin-bottom:8px; color:#fff; text-align:left; cursor:pointer;
+  background:linear-gradient(135deg,rgba(232,68,58,.24),rgba(245,132,38,.15)); box-shadow:0 10px 26px rgba(232,68,58,.14); animation:promptIn .22s ease; }
+.coach-prompt span{ font-size:13px; font-weight:800; line-height:1.35; }
+.coach-prompt b{ flex-shrink:0; font-size:12px; color:#1a1207; background:var(--ny-a); border-radius:999px; padding:4px 8px; }
+@keyframes promptIn{ from{opacity:0;transform:translateY(-5px)} to{opacity:1;transform:none} }
 
 .feed{ width:100%; flex:1 1 auto; min-height:0; overflow-y:auto; background:var(--panel);
   border-radius:14px; padding:12px 14px; display:flex; flex-direction:column; gap:6px; scroll-behavior:smooth; -webkit-overflow-scrolling:touch; }
@@ -72,6 +83,8 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
 .feed-row.sys{ justify-content:center; color:var(--ny-a); font-weight:700; background:rgba(245,132,38,.08); }
 .feed-row.score-mine{ background:rgba(46,194,107,.1); }
 .feed-row.score-opp{ background:rgba(232,68,58,.08); }
+.feed-row.coach-effect{ background:linear-gradient(135deg,rgba(46,194,107,.16),rgba(245,132,38,.08)); border:1px solid rgba(46,194,107,.32); font-weight:800; }
+.feed-row.coach-result{ background:rgba(245,132,38,.12); border:1px solid rgba(245,132,38,.25); }
 .feed-row.big-play{ font-weight:700; }
 .feed-row.big-play .ft-text{ font-size:15px; }
 .ft-meta{ display:flex; gap:6px; align-items:center; flex-shrink:0; padding-top:1px; }
@@ -182,9 +195,13 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
 /* 直播流/数据 切换 tab */
 .tabs{ width:100%; display:flex; gap:8px; margin-bottom:8px; }
 .tab{ flex:1; background:rgba(255,255,255,.05); border:1px solid var(--line); color:#9aa5b1;
-  border-radius:8px; padding:8px; font-size:13px; font-weight:700; cursor:pointer; transition:.12s; }
+  border-radius:8px; padding:8px; font-size:13px; font-weight:700; cursor:pointer; transition:.12s; position:relative; }
 .tab:hover{ color:#eef2f6; }
 .tab.active{ background:rgba(245,132,38,.18); border-color:var(--ny-a); color:var(--ny-a); }
+.tab-alert{ display:none; position:absolute; right:8px; top:7px; width:8px; height:8px; border-radius:50%; background:#ff4d43; box-shadow:0 0 0 4px rgba(232,68,58,.15); }
+.tab.has-alert .tab-alert{ display:block; animation:alertPulse .75s ease infinite alternate; }
+@keyframes alertPulse{ from{transform:scale(.85);opacity:.72} to{transform:scale(1.15);opacity:1} }
+.coach-focus{ box-shadow:0 0 0 2px rgba(245,132,38,.55), 0 0 22px rgba(245,132,38,.22) !important; }
 
 /* 实时数据 box score */
 .pause-countdown{ width:100%; margin-bottom:12px; padding:13px 14px; border-radius:14px;
@@ -339,7 +356,11 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
   .sc-mid{ min-width:62px; }
   .sc-q{ font-size:11px; } .sc-clock{ font-size:18px; }
   .dot{ font-size:10px; }
-  .mom{ height:5px; margin:6px 0 7px; }
+  .mom{ height:5px; margin:6px 0 5px; }
+  .situation-line{ font-size:11.5px; padding:6px 8px; margin-bottom:5px; }
+  .coach-prompt{ padding:7px 9px; margin-bottom:6px; }
+  .coach-prompt span{ font-size:12px; }
+  .coach-prompt b{ font-size:11px; padding:3px 7px; }
 
   .postgame-panel{ padding:9px 10px; margin-bottom:7px; }
   .postgame-title{ font-size:18px; }
@@ -455,6 +476,11 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
       <div class="sc-team"><div class="sc-name"><b>马刺</b></div><div class="sc-pts" id="sb-spurs">0</div></div>
     </div>
     <div class="mom"><div id="mom-knicks" style="width:50%"></div><div id="mom-spurs" style="width:50%"></div></div>
+    <div class="situation-line neutral" id="situation-line">🟡 开场观察：先看两队气势和体力变化</div>
+    <button class="coach-prompt hidden" id="coach-prompt" type="button">
+      <span id="coach-prompt-text">该你出手了</span>
+      <b>进指挥台</b>
+    </button>
 
     <div class="postgame-panel hidden" id="postgame-panel">
       <div class="postgame-kicker" id="postgame-kicker">终场</div>
@@ -474,7 +500,7 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
 
     <div class="tabs">
       <button class="tab active" id="tab-feed">📡 文字直播</button>
-      <button class="tab" id="tab-cmd">🎯 指挥台</button>
+      <button class="tab" id="tab-cmd">🎯 指挥台<span class="tab-alert" aria-hidden="true"></span></button>
       <button class="tab" id="tab-box">📊 实时数据</button>
     </div>
 

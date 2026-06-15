@@ -51,6 +51,10 @@ const S = {
   homeTeam: null, awayTeam: null, arena: "", crowdHeat: 0, // 主场与声浪
   coachIdle: 0,          // 玩家连续未进行有效指挥的回合数
   targetLevel: 0,        // 被对手摸透/针对的惩罚层数
+  coachPrompt: null,     // 当前「该你出手了」提示
+  lastPromptType: "",
+  lastPromptTick: -99,
+  pendingCoachEffect: null, // 操作后 1~2 回合的因果反馈
 };
 
 const QUARTERS = 4;
@@ -103,6 +107,7 @@ function startApp() {
   $("tab-feed").onclick = () => setView("feed");
   $("tab-box").onclick = () => setView("box");
   $("tab-cmd").onclick = () => setView("cmd");
+  if ($("coach-prompt")) $("coach-prompt").onclick = () => openCoachPrompt();
   setupBoxScrollLock();
   showScreen("select");
 }
@@ -221,6 +226,9 @@ function applySub(team, outId, inId, byCoach, opt = {}) {
     pushFeed(team, `${tag}换人：${inP.name} 换下 ${outP.name}（体力 ${Math.round(outP.stamina)}）。`, { team, mini: true });
     maybeRichFeed("substitution", team, { T: ROSTERS[team].name, O: inP.name, P: outP.name }, 0.7);
   }
+  if (byCoach && team === S.myTeam) {
+    markCoachEffect("sub", `${inP.name}换下${outP.name}`, `${outP.name}不用硬撑，${inP.name}带着体力上来补这一段`);
+  }
   return { inP, outP };
 }
 
@@ -334,6 +342,10 @@ function startGame() {
   S.momentum[S.homeTeam] = 5;
   S.coachIdle = 0;
   S.targetLevel = 0;
+  S.coachPrompt = null;
+  S.lastPromptType = "";
+  S.lastPromptTick = -99;
+  S.pendingCoachEffect = null;
   // 两队开局战术 = 各自真实战术身份（尼克斯传导/弹性，马刺快攻/护框）
   S.scheme = {
     knicks: { off: TEAM_TACTICS.knicks.defaultOff, def: TEAM_TACTICS.knicks.defaultDef },
@@ -454,6 +466,8 @@ function togglePause() {
     homeCrowdText("timeout", {}, 0.65);
     liftHeat(S.myTeam, 8);             // 在场球员士气小幅回暖
     S.run = { team: null, pts: 0 };
+    noteCoachAction("暂停布置");
+    markCoachEffect("timeout", "叫暂停重新布置", "打断对手一波流，给体力和情绪一个回稳窗口");
     autoRotate(S.oppTeam, true, "暂停批量轮换");   // 对手也趁暂停批量轮换疲劳球员
     openSubWindow(`📣 ${ROSTERS[S.myTeam].name} 请求暂停！士气回稳，可调整战术与阵容（${20}秒布置时间）。`, "▶ 继续比赛", 20, S.myTeam);
   }
@@ -511,6 +525,8 @@ function advanceAfterPossession(clutch) {
 
   tickStamina();
   maybeAutoRotationWindow();
+  if (!clutch) updateCoachTargeting();
+  resolvePendingCoachEffect();
   updateScoreboard();
 
   if (S.clock <= 0) return handleClockExpired();
@@ -934,6 +950,8 @@ function pushFeed(team, text, opt = {}) {
   if (opt.score) row.classList.add(team === S.myTeam ? "score-mine" : "score-opp");
   if (opt.big) row.classList.add("big-play");
   if (opt.mini) row.classList.add("mini");
+  if (opt.coach) row.classList.add("coach-effect");
+  if (opt.coachResult) row.classList.add("coach-result");
   if (team === "system") row.classList.add("sys");
 
   const t = team === "system" ? "" :
@@ -1006,6 +1024,131 @@ function nudgeCrowd(team, delta, kind, chance = 0.2) {
 function homeMakeBonus(team) { return team === S.homeTeam ? S.crowdHeat * 0.00045 : 0; }
 function awayNoisePenalty(team) { return team === S.awayTeam ? S.crowdHeat * 0.00045 : 0; }
 
+// ----------------- 教练可玩性闭环：看懂局势 → 该你出手 → 立刻见效 -----------------
+function situationLevel() {
+  if (!S.myTeam || !ROSTERS[S.myTeam] || !ROSTERS[S.myTeam].players[0].st) {
+    return { level: "neutral", text: "🟡 开场观察：先看两队气势和体力变化" };
+  }
+  const my = S.myTeam, opp = S.oppTeam;
+  const diff = S.score[my] - S.score[opp];
+  const myMom = S.momentum[my] || 0, oppMom = S.momentum[opp] || 0;
+  const court = onCourtArr(my);
+  const tired = court.slice().sort((a, b) => a.stamina - b.stamina)[0];
+  const hot = court.slice().sort((a, b) => (b.heat || 0) - (a.heat || 0))[0];
+  const cold = court.slice().sort((a, b) => (a.heat || 0) - (b.heat || 0))[0];
+  const oppRun = S.run.team === opp ? S.run.pts : 0;
+  const lateClose = S.quarter >= 4 && S.clock <= 150 && Math.abs(diff) <= 6;
+
+  if (oppRun >= 8) return { level: "danger", text: `🔴 警报：${ROSTERS[opp].name}打出 ${oppRun}-0，建议暂停、变阵或先降节奏` };
+  if (S.targetLevel >= 2) return { level: "danger", text: `🔴 警报：对手已经读到你的套路，马上换战术/轮换打乱预判` };
+  if (tired && tired.stamina < 34) return { level: "danger", text: `🔴 警报：${tired.name}体力见红，下一次窗口优先换人` };
+  if (lateClose) return { level: "danger", text: `🔴 关键时刻：分差只有 ${Math.abs(diff)} 分，每次战术和轮换都会放大` };
+  if (diff >= 8 && myMom >= oppMom + 4) return { level: "good", text: `🟢 顺风：领先 ${diff} 分且气势在涨，保持节奏别乱送失误` };
+  if (hot && (hot.heat || 0) >= 24) return { level: "good", text: `🟢 顺风点：${hot.name}手感正热，可以围绕他继续做文章` };
+  if (diff <= -8 || oppMom >= myMom + 7) return { level: "neutral", text: `🟡 拉锯偏逆风：先稳住失误，找一次暂停/变阵机会` };
+  if (cold && (cold.heat || 0) <= -24) return { level: "neutral", text: `🟡 拉锯：${cold.name}状态偏冷，注意别让低迷扩大` };
+  return { level: "neutral", text: `🟡 拉锯：局势还没拉开，盯住体力、手感和对手战术变化` };
+}
+
+function renderSituationLine() {
+  const el = $("situation-line");
+  if (!el) return;
+  const s = situationLevel();
+  el.className = `situation-line ${s.level}`;
+  el.textContent = s.text;
+}
+
+function setCoachPrompt(type, text, focus = "coach-advice") {
+  if (!S.myTeam || S.gameOver) return;
+  const sameCooling = S.lastPromptType === type && S.tickCount - S.lastPromptTick < 7;
+  const globalCooling = S.tickCount - S.lastPromptTick < 3;
+  if (sameCooling || globalCooling) return;
+  S.coachPrompt = { type, text, focus };
+  S.lastPromptType = type;
+  S.lastPromptTick = S.tickCount;
+  renderCoachPrompt();
+}
+
+function clearCoachPrompt() {
+  S.coachPrompt = null;
+  renderCoachPrompt();
+}
+
+function renderCoachPrompt() {
+  const box = $("coach-prompt"), txt = $("coach-prompt-text"), tab = $("tab-cmd");
+  if (!box || !txt || !tab) return;
+  const show = !!S.coachPrompt && !S.gameOver && S.view !== "cmd";
+  box.classList.toggle("hidden", !show);
+  tab.classList.toggle("has-alert", !!S.coachPrompt && !S.gameOver);
+  if (show) txt.textContent = S.coachPrompt.text;
+}
+
+function evaluateCoachPrompt() {
+  if (!S.myTeam || S.gameOver || S.decisionPending || S.subWindow) { renderCoachPrompt(); return; }
+  const my = S.myTeam, opp = S.oppTeam;
+  const oppRun = S.run.team === opp ? S.run.pts : 0;
+  const court = onCourtArr(my);
+  const tired = court.slice().sort((a, b) => a.stamina - b.stamina)[0];
+  const cold = court.slice().sort((a, b) => (a.heat || 0) - (b.heat || 0))[0];
+  const diff = S.score[my] - S.score[opp];
+
+  if (oppRun >= 8) return setCoachPrompt("run", `⚠️ ${ROSTERS[opp].name}打出 ${oppRun}-0，建议叫暂停或变阵`, "coach-advice");
+  if (S.targetLevel > 0) return setCoachPrompt("target", "⚠️ 对手正在针对你的固定套路，建议换战术/换人", "coach-advice");
+  if (tired && tired.stamina < 42) return setCoachPrompt("stamina", `🔁 ${tired.name}体力偏低，下一次窗口建议轮换`, "sub-advice");
+  if (cold && (cold.heat || 0) <= -28) return setCoachPrompt("cold", `🧊 ${cold.name}状态低迷，考虑换下或换打法`, "sub-advice");
+  if (S.quarter >= 4 && S.clock <= 150 && Math.abs(diff) <= 6) return setCoachPrompt("late", "⏱ 最后关键时刻，建议检查战术和场上体力", "coach-advice");
+  if (S.coachPrompt && S.tickCount - S.lastPromptTick > 12) clearCoachPrompt();
+  else renderCoachPrompt();
+}
+
+function renderCoachUx() {
+  renderSituationLine();
+  evaluateCoachPrompt();
+}
+
+function openCoachPrompt() {
+  const focus = S.coachPrompt ? S.coachPrompt.focus : "coach-advice";
+  setView("cmd");
+  setTimeout(() => focusCoachArea(focus), 30);
+  clearCoachPrompt();
+}
+
+function focusCoachArea(id) {
+  const el = $(id);
+  if (!el) return;
+  el.classList.add("coach-focus");
+  el.scrollIntoView({ block: "center", behavior: "smooth" });
+  setTimeout(() => el.classList.remove("coach-focus"), 1400);
+}
+
+function markCoachEffect(type, title, impact) {
+  if (!S.myTeam || S.gameOver) return;
+  S.pendingCoachEffect = {
+    type, title, impact,
+    atTick: S.tickCount,
+    myScore: S.score[S.myTeam],
+    oppScore: S.score[S.oppTeam],
+    myMom: S.momentum[S.myTeam] || 0,
+  };
+  clearCoachPrompt();
+  pushFeed(S.myTeam, `📋 教练调整：${title} → ${impact}`, { team: S.myTeam, coach: true });
+}
+
+function resolvePendingCoachEffect() {
+  const e = S.pendingCoachEffect;
+  if (!e || S.tickCount <= e.atTick + 1 || S.gameOver) return;
+  const myGain = S.score[S.myTeam] - e.myScore;
+  const oppGain = S.score[S.oppTeam] - e.oppScore;
+  const momGain = (S.momentum[S.myTeam] || 0) - e.myMom;
+  let result = "机会已经创造出来了，接下来就看球员能不能把它兑现。";
+  if (myGain > oppGain) result = "调整开始兑现：这一波回合你拿到了更好的得分质量。";
+  else if (momGain >= 2) result = "调整稳住了局面：气势没有继续被对手压过去。";
+  else if (e.type === "sub") result = "轮换价值已经显现：体力风险被提前拆掉，不用硬撑到崩。";
+  else if (e.type === "timeout") result = "暂停价值已经显现：情绪和声浪被压住，比赛重新回到可指挥状态。";
+  pushFeed(S.myTeam, `✅ ${result}`, { team: S.myTeam, mini: true, coachResult: true });
+  S.pendingCoachEffect = null;
+}
+
 // ----------------- 视图切换 -----------------
 function setView(v) {
   S.view = v;
@@ -1017,6 +1160,7 @@ function setView(v) {
   $("tab-cmd").classList.toggle("active", v === "cmd");
   if (v === "box") renderBox();
   if (v === "cmd") renderCmd();
+  renderCoachPrompt();
 }
 
 // ----------------- box score -----------------
@@ -1085,6 +1229,7 @@ function updateScoreboard() {
     else if (!S.running) dot.textContent = "⏸ 已暂停";
     else dot.textContent = "● 直播中";
   }
+  renderCoachUx();
   if (S.view === "box") renderBox();
   if (S.view === "cmd") updateStaminaBars();
 }
@@ -1239,6 +1384,12 @@ function setMyScheme(kind, key) {
   const info = kind === "off" ? OFF_SCHEMES[key] : DEF_SCHEMES[key];
   const tpl = kind === "off" ? SCHEME_FLAVOR.myOff : SCHEME_FLAVOR.myDef;
   pushFeed(S.myTeam, fill(tpl, { N: info.name, D: info.desc }), { team: S.myTeam });
+  noteCoachAction(kind === "off" ? "进攻战术调整" : "防守战术调整");
+  markCoachEffect(
+    kind === "off" ? "scheme-off" : "scheme-def",
+    `${kind === "off" ? "进攻" : "防守"}切到【${info.name}】`,
+    kind === "off" ? reasonOff(key, S.scheme[S.oppTeam].def) : reasonDef(key, S.scheme[S.oppTeam].off)
+  );
   // 即时提示是否克制对手
   if (kind === "def") {
     const m = (MATCHUP[S.scheme[S.oppTeam].off] && MATCHUP[S.scheme[S.oppTeam].off][key]) || 0;
@@ -1448,6 +1599,8 @@ function askDecision() {
     b.onclick = () => {
       const msg = d.apply();
       pushFeed(S.myTeam, "📋 " + msg, { team: S.myTeam });
+      noteCoachAction("关键时刻布置");
+      markCoachEffect("decision", d.label.replace(/^[^\s]+\s*/, ""), "这一回合的执行权已经被你明确交代，结果会很快兑现");
       bar.classList.add("hidden");
       S.decisionPending = false;
       if (S.running) scheduleNext(500);
@@ -1597,6 +1750,7 @@ function resolveClutch(opt) {
   const preDiff = S.score[S.myTeam] - S.score[def];
   const defender = pickByWeight(onCourtArr(def), (d) => d.def + (styleOf(d).blk || 1) * 12 + (styleOf(d).stl || 1) * 10);
   pushFeed(S.myTeam, `📋 关键回合选择【${packLabel(pack)}】，${p.name}是第一触发点。`, { team: S.myTeam, big: true });
+  markCoachEffect("clutch", `关键球选择【${packLabel(pack)}】`, `${p.name}成为第一触发点，成败会直接写进下一段直播`);
 
   let outcome;
   if (pack === "star") {
