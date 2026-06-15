@@ -22,7 +22,7 @@ const S = {
   clock: 720,           // 真实每节 12:00 = 720 秒
   possessionTeam: null,
   running: false,
-  speed: 900,           // 每条直播间隔(ms)
+  speed: 2600,          // 每条直播间隔(ms)，默认最慢，方便新手读懂局势
   fouls: { knicks: 0, spurs: 0 },
   momentum: { knicks: 0, spurs: 0 },
   timer: null,
@@ -458,7 +458,7 @@ function beginGamePlayback() {
   S.running = true;
   $("btn-pause").textContent = "⏸ 叫暂停";
   updateScoreboard();
-  scheduleNext(900);
+  scheduleNext(S.speed);
 }
 
 function startGame() {
