@@ -55,6 +55,13 @@ const S = {
   lastPromptType: "",
   lastPromptTick: -99,
   pendingCoachEffect: null, // 操作后 1~2 回合的因果反馈
+  coachIntroOpen: false,
+  tutorialOpen: false,
+  tutorialIndex: 0,
+  coachTask: null,
+  coachTaskResult: null,
+  coachStats: null,
+  openingStarted: false,
 };
 
 const QUARTERS = 4;
@@ -108,6 +115,13 @@ function startApp() {
   $("tab-box").onclick = () => setView("box");
   $("tab-cmd").onclick = () => setView("cmd");
   if ($("coach-prompt")) $("coach-prompt").onclick = () => openCoachPrompt();
+  if ($("coach-intro-start")) $("coach-intro-start").onclick = () => startCoachIntro(false, false);
+  if ($("coach-intro-tutorial")) $("coach-intro-tutorial").onclick = () => {
+    const done = storeGet("finalsCoachTutorialDone") === "1";
+    startCoachIntro(done, !done);
+  };
+  if ($("tutorial-next")) $("tutorial-next").onclick = () => nextTutorialStep();
+  if ($("tutorial-skip")) $("tutorial-skip").onclick = () => finishTutorial();
   setupBoxScrollLock();
   showScreen("select");
 }
@@ -137,6 +151,13 @@ function setupBoxScrollLock() {
     el.addEventListener("touchend", clearLock, { passive: true });
     el.addEventListener("touchcancel", clearLock, { passive: true });
   });
+}
+
+function storeGet(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function storeSet(key, val) {
+  try { localStorage.setItem(key, val); } catch {}
 }
 
 // ----------------- 系列赛页 -----------------
@@ -318,6 +339,127 @@ function setupHomeCourt() {
   S.crowdHeat = 8;
 }
 
+function makeCoachStats() {
+  return {
+    actions: 0, schemeSwitches: 0, subs: 0, timeouts: 0, clutchChoices: 0, promptOpens: 0,
+    effects: 0, positiveEffects: 0, maxMyRun: 0, maxOppRun: 0, bestLead: 0, worstDeficit: 0,
+    firstActionTick: null,
+  };
+}
+
+function buildCoachTask() {
+  const my = S.myTeam, opp = S.oppTeam;
+  const closeout = S.seriesWins[my] === 3;
+  const survive = S.seriesWins[my] < S.seriesWins[opp];
+  if (closeout) return {
+    id: "closeout", name: "冠军收口", desc: "赢下本场，并完成至少 3 次有效指挥。",
+    check: (won, st) => won && st.actions >= 3,
+  };
+  if (survive) return {
+    id: "survive", name: "逆转续命", desc: "赢下本场，并至少完成 2 次暂停/战术止血。",
+    check: (won, st) => won && (st.timeouts + st.schemeSwitches) >= 2,
+  };
+  if (my === S.homeTeam) return {
+    id: "homeRun", name: "引爆主场", desc: "我方至少打出一次 10-0，一次点燃全场。",
+    check: (_won, st) => st.maxMyRun >= 10,
+  };
+  return {
+    id: "awayNoise", name: "客场抗噪", desc: "别让主队/对手打出 12-0 以上的一波流。",
+    check: (_won, st) => st.maxOppRun < 12,
+  };
+}
+
+function renderCoachTask() {
+  const bar = $("coach-task-bar"), name = $("coach-task-name"), desc = $("coach-task-desc");
+  if (!bar || !name || !desc) return;
+  if (!S.coachTask) { bar.classList.add("hidden"); return; }
+  bar.classList.remove("hidden");
+  name.textContent = `🎯 ${S.coachTask.name}`;
+  desc.textContent = S.coachTask.desc;
+}
+
+const TUTORIAL_STEPS = [
+  { target: "situation-line", view: "feed", title: "第一眼看局势", body: "比分下面这句话会把复杂数值翻译成人话：顺风、拉锯、警报。你不用先懂所有系统，先看它判断危险。" },
+  { target: "tab-cmd", view: "feed", title: "红点就是该你出手", body: "当对手打出一波流、球员体力见红、最后关键时刻，指挥台会亮红点。点提示带会直接带你去该处理的位置。" },
+  { target: "coach-advice", view: "cmd", title: "操作一定有反馈", body: "调战术、换人、叫暂停后，直播里会立刻出现教练因果反馈；过一两个回合还会告诉你有没有兑现。" },
+];
+
+function showCoachIntro() {
+  const modal = $("coach-intro-modal");
+  if (!modal || !S.coachTask) { beginGamePlayback(); return; }
+  S.coachIntroOpen = true;
+  S.running = false;
+  clearTimeout(S.timer);
+  const my = ROSTERS[S.myTeam], opp = ROSTERS[S.oppTeam];
+  $("coach-intro-title").textContent = `你是 ${my.name} 主教练`;
+  $("coach-intro-body").innerHTML =
+    `这一场你不是观众。你要读局势、调战术、管轮换、抓关键球。<br>` +
+    `对手是 <b>${opp.name}</b>，地点是 <b>${S.arena}</b>。比分由球员打，比赛方向由你的决定改变。`;
+  $("coach-intro-task-name").textContent = S.coachTask.name;
+  $("coach-intro-task-desc").textContent = S.coachTask.desc;
+  const tutorialDone = storeGet("finalsCoachTutorialDone") === "1";
+  $("coach-intro-start").textContent = tutorialDone ? "开始执教" : "开始 10 秒上手";
+  $("coach-intro-tutorial").textContent = tutorialDone ? "重看上手" : "跳过教学直接开打";
+  $("coach-intro-tutorial").classList.remove("hidden");
+  modal.classList.remove("hidden");
+  updateScoreboard();
+}
+
+function startCoachIntro(forceTutorial, skipTutorial) {
+  const modal = $("coach-intro-modal");
+  if (modal) modal.classList.add("hidden");
+  S.coachIntroOpen = false;
+  const tutorialDone = storeGet("finalsCoachTutorialDone") === "1";
+  if (skipTutorial) storeSet("finalsCoachTutorialDone", "1");
+  const needTutorial = forceTutorial || (!skipTutorial && !tutorialDone);
+  if (needTutorial) showTutorial(0);
+  else beginGamePlayback();
+}
+
+function showTutorial(idx) {
+  S.tutorialOpen = true;
+  S.running = false;
+  clearTimeout(S.timer);
+  S.tutorialIndex = idx;
+  const step = TUTORIAL_STEPS[idx];
+  setView(step.view);
+  $("coach-tutorial-modal").classList.remove("hidden");
+  $("tutorial-step").textContent = `${idx + 1} / ${TUTORIAL_STEPS.length}`;
+  $("tutorial-title").textContent = step.title;
+  $("tutorial-body").textContent = step.body;
+  $("tutorial-next").textContent = idx === TUTORIAL_STEPS.length - 1 ? "开始比赛" : "下一步";
+  $("tutorial-dots").innerHTML = TUTORIAL_STEPS.map((_, i) => `<i class="${i === idx ? "on" : ""}"></i>`).join("");
+  setTimeout(() => focusCoachArea(step.target), 40);
+}
+
+function nextTutorialStep() {
+  if (S.tutorialIndex >= TUTORIAL_STEPS.length - 1) return finishTutorial();
+  showTutorial(S.tutorialIndex + 1);
+}
+
+function finishTutorial() {
+  const modal = $("coach-tutorial-modal");
+  if (modal) modal.classList.add("hidden");
+  S.tutorialOpen = false;
+  storeSet("finalsCoachTutorialDone", "1");
+  setView("feed");
+  beginGamePlayback();
+}
+
+function beginGamePlayback() {
+  if (S.gameOver) return;
+  S.coachIntroOpen = false;
+  S.tutorialOpen = false;
+  if (!S.openingStarted) {
+    S.openingStarted = true;
+    pushFeed("system", `🏀 G${S.gameNo} 正式开打！${ROSTERS[S.possessionTeam].name}率先拿到球权。`);
+  }
+  S.running = true;
+  $("btn-pause").textContent = "⏸ 叫暂停";
+  updateScoreboard();
+  scheduleNext(900);
+}
+
 function startGame() {
   S.score = { knicks: 0, spurs: 0 };
   S.quarter = 1;
@@ -346,6 +488,13 @@ function startGame() {
   S.lastPromptType = "";
   S.lastPromptTick = -99;
   S.pendingCoachEffect = null;
+  S.coachIntroOpen = false;
+  S.tutorialOpen = false;
+  S.tutorialIndex = 0;
+  S.coachTaskResult = null;
+  S.coachStats = makeCoachStats();
+  S.coachTask = buildCoachTask();
+  S.openingStarted = false;
   // 两队开局战术 = 各自真实战术身份（尼克斯传导/弹性，马刺快攻/护框）
   S.scheme = {
     knicks: { off: TEAM_TACTICS.knicks.defaultOff, def: TEAM_TACTICS.knicks.defaultDef },
@@ -357,6 +506,7 @@ function startGame() {
   $("decision-bar").classList.add("hidden");
   hidePostGamePanel();
   setView("feed");
+  renderCoachTask();
   updateScoreboard();
   showScreen("game");
   pushFeed("system", `🏆 2026 NBA总决赛 G${S.gameNo}｜大比分 ${ROSTERS.knicks.name} ${S.seriesWins.knicks} - ${S.seriesWins.spurs} ${ROSTERS.spurs.name}。${S.seriesWins.knicks === 3 ? "尼克斯再赢1场即夺53年来首冠，马刺背水一战！" : ""}`);
@@ -368,12 +518,13 @@ function startGame() {
   }
   pushFeed("system", `📋 ${ROSTERS.knicks.name} 战术基调：${TEAM_TACTICS.knicks.tag}。`);
   pushFeed("system", `📋 ${ROSTERS.spurs.name} 战术基调：${TEAM_TACTICS.spurs.tag}。`);
-  pushFeed("system", `🏀 G${S.gameNo} 跳球！${ROSTERS[S.possessionTeam].name}率先拿到球权。比赛开始！`);
-  S.running = true;
+  pushFeed("system", `🎯 本场教练任务【${S.coachTask.name}】：${S.coachTask.desc}`);
+  pushFeed("system", `🏀 G${S.gameNo} 跳球准备！${ROSTERS[S.possessionTeam].name}将率先拿到球权。`);
+  S.running = false;
   $("btn-pause").textContent = "⏸ 叫暂停";
   updateTimeoutInfo();
   updateSpeedLabel();
-  scheduleNext(1200);
+  showCoachIntro();
 }
 
 function scheduleNext(ms) {
@@ -821,6 +972,15 @@ function addScore(team, pts) {
   // 一波流追踪：同队连续得分累加，对方一得分即切换归零
   if (S.run.team === team) S.run.pts += pts;
   else S.run = { team, pts };
+  trackCoachRun(team);
+}
+function trackCoachRun(team) {
+  if (!S.coachStats || !S.myTeam || !S.run || S.run.team !== team) return;
+  if (team === S.myTeam) S.coachStats.maxMyRun = Math.max(S.coachStats.maxMyRun, S.run.pts);
+  if (team === S.oppTeam) S.coachStats.maxOppRun = Math.max(S.coachStats.maxOppRun, S.run.pts);
+  const diff = S.score[S.myTeam] - S.score[S.oppTeam];
+  S.coachStats.bestLead = Math.max(S.coachStats.bestLead, diff);
+  S.coachStats.worstDeficit = Math.min(S.coachStats.worstDeficit, diff);
 }
 function addMomentum(team, v) {
   const other = team === "knicks" ? "spurs" : "knicks";
@@ -909,6 +1069,14 @@ function coachTargetPenalty(kind) {
 }
 function noteCoachAction(label) {
   if (!S.myTeam) return;
+  if (S.coachStats) {
+    S.coachStats.actions++;
+    if (S.coachStats.firstActionTick === null) S.coachStats.firstActionTick = S.tickCount;
+    if (label.includes("战术")) S.coachStats.schemeSwitches++;
+    if (label.includes("换人")) S.coachStats.subs++;
+    if (label.includes("暂停")) S.coachStats.timeouts++;
+    if (label.includes("关键")) S.coachStats.clutchChoices++;
+  }
   const wasTargeted = S.targetLevel > 0;
   S.coachIdle = 0;
   S.targetLevel = 0;
@@ -1084,7 +1252,7 @@ function renderCoachPrompt() {
 }
 
 function evaluateCoachPrompt() {
-  if (!S.myTeam || S.gameOver || S.decisionPending || S.subWindow) { renderCoachPrompt(); return; }
+  if (!S.myTeam || S.gameOver || S.decisionPending || S.subWindow || S.coachIntroOpen || S.tutorialOpen) { renderCoachPrompt(); return; }
   const my = S.myTeam, opp = S.oppTeam;
   const oppRun = S.run.team === opp ? S.run.pts : 0;
   const court = onCourtArr(my);
@@ -1108,6 +1276,7 @@ function renderCoachUx() {
 
 function openCoachPrompt() {
   const focus = S.coachPrompt ? S.coachPrompt.focus : "coach-advice";
+  if (S.coachStats) S.coachStats.promptOpens++;
   setView("cmd");
   setTimeout(() => focusCoachArea(focus), 30);
   clearCoachPrompt();
@@ -1130,6 +1299,7 @@ function markCoachEffect(type, title, impact) {
     oppScore: S.score[S.oppTeam],
     myMom: S.momentum[S.myTeam] || 0,
   };
+  if (S.coachStats) S.coachStats.effects++;
   clearCoachPrompt();
   pushFeed(S.myTeam, `📋 教练调整：${title} → ${impact}`, { team: S.myTeam, coach: true });
 }
@@ -1140,11 +1310,13 @@ function resolvePendingCoachEffect() {
   const myGain = S.score[S.myTeam] - e.myScore;
   const oppGain = S.score[S.oppTeam] - e.oppScore;
   const momGain = (S.momentum[S.myTeam] || 0) - e.myMom;
+  let positive = false;
   let result = "机会已经创造出来了，接下来就看球员能不能把它兑现。";
-  if (myGain > oppGain) result = "调整开始兑现：这一波回合你拿到了更好的得分质量。";
-  else if (momGain >= 2) result = "调整稳住了局面：气势没有继续被对手压过去。";
-  else if (e.type === "sub") result = "轮换价值已经显现：体力风险被提前拆掉，不用硬撑到崩。";
-  else if (e.type === "timeout") result = "暂停价值已经显现：情绪和声浪被压住，比赛重新回到可指挥状态。";
+  if (myGain > oppGain) { result = "调整开始兑现：这一波回合你拿到了更好的得分质量。"; positive = true; }
+  else if (momGain >= 2) { result = "调整稳住了局面：气势没有继续被对手压过去。"; positive = true; }
+  else if (e.type === "sub") { result = "轮换价值已经显现：体力风险被提前拆掉，不用硬撑到崩。"; positive = true; }
+  else if (e.type === "timeout") { result = "暂停价值已经显现：情绪和声浪被压住，比赛重新回到可指挥状态。"; positive = true; }
+  if (positive && S.coachStats) S.coachStats.positiveEffects++;
   pushFeed(S.myTeam, `✅ ${result}`, { team: S.myTeam, mini: true, coachResult: true });
   S.pendingCoachEffect = null;
 }
@@ -1225,10 +1397,13 @@ function updateScoreboard() {
   const dot = $("sb-dot");
   if (dot) {
     if (S.gameOver) dot.textContent = "比赛结束";
+    else if (S.coachIntroOpen) dot.textContent = "📋 赛前任命";
+    else if (S.tutorialOpen) dot.textContent = "🧭 新手引导";
     else if (S.subWindow) dot.textContent = S.subBy ? `⏸ ${ROSTERS[S.subBy].short} 暂停·布置中` : "⏸ 节间·布置中";
     else if (!S.running) dot.textContent = "⏸ 已暂停";
     else dot.textContent = "● 直播中";
   }
+  renderCoachTask();
   renderCoachUx();
   if (S.view === "box") renderBox();
   if (S.view === "cmd") updateStaminaBars();
@@ -1857,6 +2032,53 @@ function showClutchOverlay(kind, big, sub) {
   S.clutchOvTimer = setTimeout(() => ov.classList.add("hidden"), kind === "win" ? 1800 : 1300);
 }
 
+function evaluateCoachTask(iWon) {
+  if (!S.coachTask || !S.coachStats) return null;
+  const done = !!S.coachTask.check(iWon, S.coachStats);
+  S.coachTaskResult = { done, name: S.coachTask.name, desc: S.coachTask.desc };
+  return S.coachTaskResult;
+}
+
+function coachGradeInfo(iWon) {
+  const st = S.coachStats || makeCoachStats();
+  const task = S.coachTaskResult || evaluateCoachTask(iWon) || { done: false, name: "本场任务" };
+  let score = 0;
+  if (iWon) score += 34;
+  if (task.done) score += 20;
+  score += Math.min(18, st.actions * 4);
+  score += Math.min(10, st.positiveEffects * 3);
+  score += Math.min(8, st.promptOpens * 4);
+  if (st.maxOppRun < 12) score += 6;
+  if (st.firstActionTick !== null && st.firstActionTick <= 12) score += 4;
+  const grade = score >= 86 ? "S" : score >= 72 ? "A" : score >= 58 ? "B" : "C";
+  const line = task.done
+    ? `本场任务完成，${st.actions ? "你的临场介入真正改变了比赛节奏。" : "球队执行到位，但还可以更主动。"}`
+    : (st.actions < 2 ? "你看得太久、出手偏少，下一场要更早介入。" : "有介入也有反馈，但本场目标没完全兑现，下一场继续优化时机。");
+  return { grade, score, task, line };
+}
+
+function renderCoachGrade(iWon) {
+  const box = $("post-coach-grade");
+  if (!box || !S.coachStats) return;
+  const st = S.coachStats;
+  const info = coachGradeInfo(iWon);
+  box.classList.remove("hidden");
+  box.innerHTML =
+    `<div class="grade-head"><span class="grade-badge">${info.grade}</span>` +
+    `<div><div class="grade-title">教练评分 ${info.score} · ${info.line}</div>` +
+    `<div class="grade-task ${info.task.done ? "done" : "fail"}">${info.task.done ? "✅" : "❌"} 任务：${info.task.name}</div></div></div>` +
+    `<div class="grade-grid">` +
+      `<span class="grade-pill">有效指挥 ${st.actions}</span>` +
+      `<span class="grade-pill">战术 ${st.schemeSwitches}</span>` +
+      `<span class="grade-pill">暂停 ${st.timeouts}</span>` +
+      `<span class="grade-pill">换人 ${st.subs}</span>` +
+      `<span class="grade-pill">关键 ${st.clutchChoices}</span>` +
+      `<span class="grade-pill">兑现 ${st.positiveEffects}/${st.effects}</span>` +
+      `<span class="grade-pill">最大一波 ${st.maxMyRun}-0</span>` +
+      `<span class="grade-pill">被打一波 ${st.maxOppRun}-0</span>` +
+    `</div>`;
+}
+
 // ----------------- 单场结束 → 系列赛结算 -----------------
 function endGame() {
   S.gameOver = true;
@@ -1865,6 +2087,7 @@ function endGame() {
 
   const my = S.score[S.myTeam], opp = S.score[S.oppTeam];
   const iWon = my > opp;
+  evaluateCoachTask(iWon);
   if (iWon) S.seriesWins[S.myTeam]++; else S.seriesWins[S.oppTeam]++;
 
   pushFeed("system", `🏁 G${S.gameNo} 终场：尼克斯 ${S.score.knicks} - ${S.score.spurs} 马刺`);
@@ -1895,6 +2118,8 @@ function renderResultBox() {
 function hidePostGamePanel() {
   const p = $("postgame-panel");
   if (p) p.classList.add("hidden");
+  const g = $("post-coach-grade");
+  if (g) g.classList.add("hidden");
 }
 
 function showPostGamePanel(seriesEnd, iWon) {
@@ -1916,6 +2141,7 @@ function showPostGamePanel(seriesEnd, iWon) {
     $("post-btn-next").classList.remove("hidden");
     $("post-btn-restart").classList.add("hidden");
   }
+  renderCoachGrade(iWon);
   showScreen("game");
   updateScoreboard();
 }

@@ -73,6 +73,11 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
 .coach-prompt span{ font-size:13px; font-weight:800; line-height:1.35; }
 .coach-prompt b{ flex-shrink:0; font-size:12px; color:#1a1207; background:var(--ny-a); border-radius:999px; padding:4px 8px; }
 @keyframes promptIn{ from{opacity:0;transform:translateY(-5px)} to{opacity:1;transform:none} }
+.coach-task-bar{ width:100%; display:flex; align-items:center; justify-content:space-between; gap:10px;
+  border:1px solid rgba(245,132,38,.28); border-radius:10px; padding:7px 10px; margin-bottom:7px;
+  background:rgba(245,132,38,.08); color:#cfd7df; font-size:12px; line-height:1.35; }
+.coach-task-bar b{ color:#ffcf6a; }
+.coach-task-bar span{ color:#9aa5b1; font-size:11px; white-space:nowrap; }
 
 .feed{ width:100%; flex:1 1 auto; min-height:0; overflow-y:auto; background:var(--panel);
   border-radius:14px; padding:12px 14px; display:flex; flex-direction:column; gap:6px; scroll-behavior:smooth; -webkit-overflow-scrolling:touch; }
@@ -183,6 +188,15 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
 .postgame-score{ font-size:26px; font-weight:900; margin-top:4px; font-variant-numeric:tabular-nums; }
 .postgame-series,.postgame-mvp{ color:#b9c3cd; font-size:13px; line-height:1.55; margin-top:2px; }
 .postgame-mvp b{ color:#eef2f6; }
+.coach-grade{ margin-top:8px; padding:9px 10px; border-radius:11px; border:1px solid rgba(245,132,38,.28);
+  background:rgba(0,0,0,.16); color:#cfd7df; font-size:12px; line-height:1.55; }
+.grade-head{ display:flex; align-items:center; gap:8px; margin-bottom:5px; }
+.grade-badge{ display:inline-flex; align-items:center; justify-content:center; min-width:34px; height:28px; border-radius:8px;
+  background:var(--ny-a); color:#1a1207; font-weight:1000; font-size:18px; }
+.grade-title{ font-weight:900; color:#fff; }
+.grade-grid{ display:flex; flex-wrap:wrap; gap:5px; margin:5px 0; }
+.grade-pill{ background:rgba(255,255,255,.07); border:1px solid var(--line); border-radius:999px; padding:2px 7px; color:#b9c3cd; }
+.grade-task.done{ color:#74e08a; } .grade-task.fail{ color:#ff8b82; }
 .postgame-actions{ display:flex; gap:8px; flex-shrink:0; }
 .postgame-actions .btn{ padding:10px 18px; font-size:14px; white-space:nowrap; }
 .result-score{ font-size:46px; font-weight:900; margin:14px 0; }
@@ -202,6 +216,27 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
 .tab.has-alert .tab-alert{ display:block; animation:alertPulse .75s ease infinite alternate; }
 @keyframes alertPulse{ from{transform:scale(.85);opacity:.72} to{transform:scale(1.15);opacity:1} }
 .coach-focus{ box-shadow:0 0 0 2px rgba(245,132,38,.55), 0 0 22px rgba(245,132,38,.22) !important; }
+
+/* 教练任命卡 / 首局引导 */
+.coach-modal{ position:fixed; inset:0; z-index:9000; display:flex; align-items:center; justify-content:center;
+  padding:18px; background:rgba(5,8,12,.72); backdrop-filter:blur(6px); }
+.coach-card{ width:min(560px,100%); border-radius:18px; padding:20px;
+  background:linear-gradient(135deg,rgba(245,132,38,.18),rgba(22,28,36,.98));
+  border:1px solid rgba(245,132,38,.5); box-shadow:0 24px 70px rgba(0,0,0,.45); text-align:left; animation:pop .25s ease; }
+.coach-kicker{ color:#ffcf6a; font-size:12px; font-weight:1000; letter-spacing:1px; margin-bottom:6px; }
+.coach-title{ font-size:25px; font-weight:1000; line-height:1.15; margin-bottom:8px; }
+.coach-body{ color:#cfd7df; font-size:14px; line-height:1.7; }
+.coach-body b{ color:#fff; }
+.coach-task-card{ margin:12px 0; padding:11px 12px; border-radius:12px; background:rgba(0,0,0,.2); border:1px solid rgba(255,255,255,.09); }
+.coach-task-card .ct-label{ color:#9aa5b1; font-size:12px; font-weight:800; margin-bottom:3px; }
+.coach-task-card .ct-name{ color:#ffcf6a; font-weight:1000; font-size:15px; }
+.coach-task-card .ct-desc{ color:#cfd7df; font-size:13px; margin-top:3px; }
+.coach-actions{ display:flex; gap:9px; margin-top:14px; flex-wrap:wrap; }
+.coach-actions .btn{ flex:1; min-width:140px; padding:11px 14px; font-size:14px; }
+.tutorial-step{ color:#ffcf6a; font-size:12px; font-weight:900; margin-bottom:6px; }
+.tutorial-dots{ display:flex; gap:5px; margin-top:10px; }
+.tutorial-dots i{ display:block; width:8px; height:8px; border-radius:50%; background:rgba(255,255,255,.18); }
+.tutorial-dots i.on{ background:var(--ny-a); box-shadow:0 0 12px rgba(245,132,38,.65); }
 
 /* 实时数据 box score */
 .pause-countdown{ width:100%; margin-bottom:12px; padding:13px 14px; border-radius:14px;
@@ -358,9 +393,16 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
   .dot{ font-size:10px; }
   .mom{ height:5px; margin:6px 0 5px; }
   .situation-line{ font-size:11.5px; padding:6px 8px; margin-bottom:5px; }
+  .coach-task-bar{ font-size:11.5px; padding:6px 8px; margin-bottom:5px; }
+  .coach-task-bar span{ display:none; }
   .coach-prompt{ padding:7px 9px; margin-bottom:6px; }
   .coach-prompt span{ font-size:12px; }
   .coach-prompt b{ font-size:11px; padding:3px 7px; }
+  .coach-card{ padding:15px; border-radius:15px; }
+  .coach-title{ font-size:21px; }
+  .coach-body{ font-size:13px; line-height:1.6; }
+  .coach-task-card{ margin:10px 0; padding:9px; }
+  .coach-actions .btn{ min-width:100%; }
 
   .postgame-panel{ padding:9px 10px; margin-bottom:7px; }
   .postgame-title{ font-size:18px; }
@@ -477,6 +519,7 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
     </div>
     <div class="mom"><div id="mom-knicks" style="width:50%"></div><div id="mom-spurs" style="width:50%"></div></div>
     <div class="situation-line neutral" id="situation-line">🟡 开场观察：先看两队气势和体力变化</div>
+    <div class="coach-task-bar hidden" id="coach-task-bar"><b id="coach-task-name">本场任务</b><span id="coach-task-desc">等待任命</span></div>
     <button class="coach-prompt hidden" id="coach-prompt" type="button">
       <span id="coach-prompt-text">该你出手了</span>
       <b>进指挥台</b>
@@ -490,6 +533,7 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
           <div class="postgame-score" id="post-result-score">尼克斯 0 - 0 马刺</div>
           <div class="postgame-series" id="post-result-series"></div>
           <div class="postgame-mvp" id="post-result-mvp"></div>
+          <div class="coach-grade hidden" id="post-coach-grade"></div>
         </div>
         <div class="postgame-actions">
           <button class="btn btn-primary" id="post-btn-next">下一场</button>
@@ -598,6 +642,39 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
   </section>
 
 </div>
+
+<!-- 赛前任命卡 -->
+<div class="coach-modal hidden" id="coach-intro-modal">
+  <div class="coach-card">
+    <div class="coach-kicker">HEAD COACH ASSIGNMENT</div>
+    <div class="coach-title" id="coach-intro-title">你是主教练</div>
+    <div class="coach-body" id="coach-intro-body"></div>
+    <div class="coach-task-card">
+      <div class="ct-label">本场教练任务</div>
+      <div class="ct-name" id="coach-intro-task-name">任务生成中</div>
+      <div class="ct-desc" id="coach-intro-task-desc">读懂局势，完成临场调度。</div>
+    </div>
+    <div class="coach-actions">
+      <button class="btn btn-primary" id="coach-intro-start">开始执教</button>
+      <button class="btn btn-ghost" id="coach-intro-tutorial">10秒上手</button>
+    </div>
+  </div>
+</div>
+
+<!-- 首局三步引导 -->
+<div class="coach-modal hidden" id="coach-tutorial-modal">
+  <div class="coach-card">
+    <div class="tutorial-step" id="tutorial-step">1 / 3</div>
+    <div class="coach-title" id="tutorial-title">看局势</div>
+    <div class="coach-body" id="tutorial-body"></div>
+    <div class="tutorial-dots" id="tutorial-dots"></div>
+    <div class="coach-actions">
+      <button class="btn btn-primary" id="tutorial-next">下一步</button>
+      <button class="btn btn-ghost" id="tutorial-skip">跳过，直接开打</button>
+    </div>
+  </div>
+</div>
+
 <!-- 关键球全屏演出 -->
 <div class="clutch-overlay hidden" id="clutch-overlay">
   <div class="clutch-big" id="clutch-big"></div>
