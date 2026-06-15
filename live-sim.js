@@ -94,12 +94,19 @@ const CLUTCH_MAP = {
 
 // ----------------- 启动流程 -----------------
 function setAppHeight() {
-  document.documentElement.style.setProperty("--app-height", `${window.innerHeight}px`);
+  const vv = window.visualViewport;
+  const h = vv && vv.height ? vv.height : window.innerHeight;
+  document.documentElement.style.setProperty("--app-height", `${Math.round(h)}px`);
 }
 function startApp() {
   setAppHeight();
   window.addEventListener("resize", setAppHeight);
-  window.addEventListener("orientationchange", setAppHeight);
+  window.addEventListener("orientationchange", () => setTimeout(setAppHeight, 120));
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", setAppHeight);
+    window.visualViewport.addEventListener("scroll", setAppHeight);
+  }
+  document.addEventListener("gesturestart", (e) => e.preventDefault(), { passive: false });
   document.querySelectorAll(".pick-team").forEach((btn) => {
     btn.onclick = () => {
       S.myTeam = btn.dataset.team;
@@ -124,6 +131,7 @@ function startApp() {
   $("tab-box").onclick = () => setView("box");
   $("tab-cmd").onclick = () => setView("cmd");
   if ($("coach-prompt")) $("coach-prompt").onclick = () => openCoachPrompt();
+  if ($("situation-line")) $("situation-line").onclick = () => onAssistantGameUiClick("situation-line");
   if ($("coach-intro-start")) $("coach-intro-start").onclick = () => startCoachIntro(false);
   if ($("coach-intro-tutorial")) $("coach-intro-tutorial").onclick = () => startCoachIntro(true);
   if ($("tutorial-next")) $("tutorial-next").onclick = () => onAssistantNext();
@@ -454,13 +462,13 @@ function showAssistantStep(step) {
   let title = "助教模式", body = "", target = "", btn = "继续", docked = true, topDock = false;
 
   if (step === ASSISTANT_STEPS.SITUATION) {
-    docked = false; target = "situation-line"; btn = "明白，看局势";
-    title = "第一眼先看局势";
-    body = "比分下面这句话会把复杂局势翻译成人话：顺风、拉锯、警报。你不需要先懂所有数值，先看它判断现在危不危险。";
+    docked = true; target = "situation-line"; btn = "点高亮局势条";
+    title = "先看比分下面那句话";
+    body = "它会告诉你现在是顺风、拉锯还是警报。别急着看数据，先点一下那条黄色局势提示。";
   } else if (step === ASSISTANT_STEPS.ENTER_CMD) {
-    docked = true; target = "tab-cmd"; btn = "进指挥台";
-    title = "红点就是该你出手";
-    body = "助教：现在不是干看着的时候。当这里亮红点，说明比赛出现了需要主教练处理的信号。只在新手局强制一次，之后你可以忽略。";
+    docked = true; target = "tab-cmd"; btn = "点高亮指挥台";
+    title = "现在该你站出来";
+    body = "场上已经有问题了。别点这里，去点上面的【指挥台】标签，进教练席处理。";
   } else if (step === ASSISTANT_STEPS.SCHEME) {
     docked = true; target = "coach-advice"; btn = "点击高亮战术继续";
     title = "第一次调战术";
@@ -488,8 +496,9 @@ function showAssistantStep(step) {
   $("tutorial-title").textContent = title;
   $("tutorial-body").textContent = body;
   $("tutorial-next").textContent = btn;
-  $("tutorial-next").disabled = step === ASSISTANT_STEPS.SCHEME || step === ASSISTANT_STEPS.TIMEOUT || step === ASSISTANT_STEPS.SUB;
-  $("tutorial-next").classList.toggle("hidden", step === ASSISTANT_STEPS.SCHEME || step === ASSISTANT_STEPS.TIMEOUT || step === ASSISTANT_STEPS.SUB);
+  const gameClickStep = step !== ASSISTANT_STEPS.FINISH;
+  $("tutorial-next").disabled = gameClickStep;
+  $("tutorial-next").classList.toggle("hidden", gameClickStep);
   $("tutorial-dots").innerHTML = Array.from({ length: total }, (_, i) => `<i class="${i < assistantStepIndex(step) ? "on" : ""}"></i>`).join("");
   clearAssistantHighlights();
   if (step === ASSISTANT_STEPS.SCHEME) renderCmd();
@@ -508,19 +517,24 @@ function hideAssistantModal() {
   clearAssistantHighlights();
 }
 
-function onAssistantNext() {
-  if (!S.assistantMode && S.assistantStep !== ASSISTANT_STEPS.FINISH) return hideAssistantModal();
-  if (S.assistantStep === ASSISTANT_STEPS.SITUATION) {
+function onAssistantGameUiClick(id) {
+  if (!S.assistantMode) return false;
+  if (S.assistantStep === ASSISTANT_STEPS.SITUATION && id === "situation-line") {
     hideAssistantModal();
     S.assistantStep = ASSISTANT_STEPS.WAIT_DANGER;
     beginGamePlayback();
-  } else if (S.assistantStep === ASSISTANT_STEPS.ENTER_CMD) {
-    clearCoachPrompt();
-    setView("cmd");
-    showAssistantStep(ASSISTANT_STEPS.SCHEME);
-  } else if (S.assistantStep === ASSISTANT_STEPS.FINISH) {
-    finishAssistantTutorial();
+    return true;
   }
+  if (S.assistantStep === ASSISTANT_STEPS.ENTER_CMD && id === "tab-cmd") {
+    clearCoachPrompt();
+    showAssistantStep(ASSISTANT_STEPS.SCHEME);
+    return true;
+  }
+  return false;
+}
+
+function onAssistantNext() {
+  if (S.assistantStep === ASSISTANT_STEPS.FINISH) finishAssistantTutorial();
 }
 
 function finishAssistantTutorial() {

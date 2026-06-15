@@ -5,14 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>虎扑式文字直播 · 2026总决赛</title>
 <style>
-* { margin:0; padding:0; box-sizing:border-box; }
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
 :root{ --bg:#0c1015; --panel:#161c24; --line:rgba(255,255,255,.08);
   --ny:#1d428a; --ny-a:#f58426; --sa:#c4ced4; --green:#2ec26b; --red:#e8443a; }
-html,body{ width:100%; height:100%; }
+html,body{ width:100%; height:100%; overflow:hidden; overscroll-behavior:none; -webkit-text-size-adjust:100%; }
 body{ font-family:-apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
-  background:var(--bg); color:#eef2f6; min-height:100dvh; overflow:hidden; }
+  background:var(--bg); color:#eef2f6; min-height:var(--app-height,100dvh); overflow:hidden; touch-action:manipulation; }
+button,input{ font:inherit; }
 #app{ height:var(--app-height,100dvh); display:flex; align-items:center; justify-content:center;
-  padding:16px; padding-bottom:calc(16px + env(safe-area-inset-bottom)); }
+  padding:calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom)); }
 .screen{ display:none; flex-direction:column; align-items:center; width:100%; max-width:680px; min-height:0; }
 .screen.active{ display:flex; animation:fade .3s ease; }
 @keyframes fade{ from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
@@ -101,7 +102,7 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
 .controls{ width:100%; display:flex; align-items:center; gap:12px; margin-top:10px; }
 .controls .btn{ padding:9px 18px; font-size:14px; }
 .speed-wrap{ flex:1; display:flex; align-items:center; gap:8px; color:#9aa5b1; font-size:13px; }
-#speed-range{ flex:1; }
+#speed-range{ flex:1; touch-action:pan-x; }
 .timeout-info{ font-size:12px; font-weight:700; color:#9aa5b1; white-space:nowrap;
   background:rgba(255,255,255,.06); padding:5px 9px; border-radius:7px; }
 .timeout-info.none{ color:#ff7b72; }
@@ -234,9 +235,10 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
 .coach-modal.coach-docked{ align-items:flex-end; justify-content:center; pointer-events:none; background:linear-gradient(180deg,rgba(5,8,12,.18),rgba(5,8,12,.62)); }
 .coach-modal.coach-docked.coach-top{ align-items:flex-start; }
 .coach-modal.coach-docked .coach-card{ pointer-events:auto; }
-.coach-card{ width:min(560px,100%); border-radius:18px; padding:20px;
+.coach-card{ width:min(560px,100%); max-height:calc(var(--app-height,100dvh) - 36px); overflow:auto; -webkit-overflow-scrolling:touch; border-radius:18px; padding:20px;
   background:linear-gradient(135deg,rgba(245,132,38,.18),rgba(22,28,36,.98));
   border:1px solid rgba(245,132,38,.5); box-shadow:0 24px 70px rgba(0,0,0,.45); text-align:left; animation:pop .25s ease; }
+.coach-modal.coach-docked .coach-card{ max-height:44vh; }
 .coach-kicker{ color:#ffcf6a; font-size:12px; font-weight:1000; letter-spacing:1px; margin-bottom:6px; }
 .coach-title{ font-size:25px; font-weight:1000; line-height:1.15; margin-bottom:8px; }
 .coach-body{ color:#cfd7df; font-size:14px; line-height:1.7; }
@@ -382,7 +384,7 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
 .pl-chip.cold-glow{ box-shadow:inset 0 0 0 1px rgba(120,150,200,.35); }
 
 @media (max-width:640px){
-  #app{ align-items:stretch; justify-content:flex-start; padding:8px; padding-bottom:calc(8px + env(safe-area-inset-bottom)); }
+  #app{ align-items:stretch; justify-content:flex-start; padding:calc(8px + env(safe-area-inset-top)) 8px calc(8px + env(safe-area-inset-bottom)); }
   .screen{ max-width:none; }
   .screen:not(#screen-game){ min-height:100%; max-height:100%; justify-content:flex-start; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:10px 0; }
   #screen-select{ justify-content:flex-start; }
@@ -415,7 +417,8 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
   .coach-prompt{ padding:7px 9px; margin-bottom:6px; }
   .coach-prompt span{ font-size:12px; }
   .coach-prompt b{ font-size:11px; padding:3px 7px; }
-  .coach-card{ padding:15px; border-radius:15px; }
+  .coach-card{ padding:15px; border-radius:15px; max-height:calc(var(--app-height,100dvh) - 24px); }
+  .coach-modal.coach-docked .coach-card{ max-height:40vh; }
   .coach-title{ font-size:21px; }
   .coach-body{ font-size:13px; line-height:1.6; }
   .coach-task-card{ margin:10px 0; padding:9px; }
