@@ -82,6 +82,7 @@ if (args.has("url")) {
     const text = await response.text();
     record("server.url.ok", response.ok, `${url} returned ${response.status}.`);
     record("server.url.entry", text.includes("src/live-sim.mjs"), "Served page contains module entry.");
+    await checkServerAssets(url, text);
   } catch (error) {
     record("server.url.ok", false, error instanceof Error ? error.message : String(error));
   }
@@ -107,4 +108,65 @@ async function fileExists(file) {
   } catch {
     return false;
   }
+}
+
+async function checkServerAssets(pageUrl, servedHtml) {
+  const assets = extractServerAssets(pageUrl, servedHtml);
+  record("server.assets.discovered", assets.length > 0, assets.length ? `Discovered ${assets.length} CSS/module assets.` : "No CSS/module assets were found in served HTML.");
+
+  for (const asset of assets) {
+    const id = `server.asset.${asset.id}`;
+
+    try {
+      const response = await fetch(asset.url);
+      const contentType = response.headers.get("content-type") || "";
+      const text = await response.text();
+      const head = text.slice(0, 200);
+      const isHtml = /^\s*<!doctype html/i.test(head) || /<html[\s>]/i.test(head);
+      const mimeOk = asset.kind === "stylesheet"
+        ? /(^|;|\s)text\/css\b/i.test(contentType)
+        : /(^|;|\s)(text|application)\/(javascript|ecmascript)\b/i.test(contentType);
+
+      record(`${id}.ok`, response.ok, `${asset.path} returned ${response.status}.`);
+      record(`${id}.mime`, mimeOk, `${asset.path} content-type is ${contentType || "missing"}.`);
+      record(`${id}.not_html`, !isHtml, isHtml ? `${asset.path} returned HTML fallback content.` : `${asset.path} did not return HTML fallback content.`);
+    } catch (error) {
+      record(`${id}.ok`, false, error instanceof Error ? error.message : String(error));
+    }
+  }
+}
+
+function extractServerAssets(pageUrl, servedHtml) {
+  const assets = [];
+
+  for (const match of servedHtml.matchAll(/<link\b[^>]*>/gi)) {
+    const tag = match[0];
+    const rel = getAttribute(tag, "rel");
+    const href = getAttribute(tag, "href");
+    if (href && rel?.toLowerCase().split(/\s+/).includes("stylesheet")) {
+      assets.push(createAsset(pageUrl, href, "stylesheet"));
+    }
+  }
+
+  for (const match of servedHtml.matchAll(/<script\b[^>]*>/gi)) {
+    const tag = match[0];
+    const type = getAttribute(tag, "type");
+    const src = getAttribute(tag, "src");
+    if (src && type?.toLowerCase() === "module") {
+      assets.push(createAsset(pageUrl, src, "module"));
+    }
+  }
+
+  return assets;
+}
+
+function createAsset(pageUrl, assetPath, kind) {
+  const url = new URL(assetPath, pageUrl);
+  const id = url.pathname.replace(/^\/+/, "").replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").toLowerCase();
+  return { id, kind, path: assetPath, url };
+}
+
+function getAttribute(tag, name) {
+  const match = tag.match(new RegExp(`\\b${name}\\s*=\\s*(["'])(.*?)\\1`, "i"));
+  return match?.[2] || "";
 }

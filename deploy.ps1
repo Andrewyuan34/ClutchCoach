@@ -3,6 +3,7 @@ $ErrorActionPreference = "Stop"
 $Server = "ubuntu@49.233.151.34"
 $RemoteDir = "/var/www/nba-live"
 $RemoteTarget = "${Server}:${RemoteDir}/"
+$PublicUrl = "http://49.233.151.34/live.html"
 
 $Files = @(
   "live.html",
@@ -43,4 +44,19 @@ if ($LASTEXITCODE -ne 0) {
   throw "Upload failed. Please check network, password, or server permissions."
 }
 
-Write-Host "Deploy complete. Open: http://49.233.151.34/live.html" -ForegroundColor Green
+Write-Host "Fixing remote static file permissions..." -ForegroundColor Cyan
+ssh $Server "chmod 755 '$RemoteDir' && find '$RemoteDir' -type d -exec chmod 755 {} \; && find '$RemoteDir' -type f -exec chmod 644 {} \;"
+
+if ($LASTEXITCODE -ne 0) {
+  throw "Remote permission fix failed. Please check SSH access or server permissions."
+}
+
+Write-Host "Verifying remote deployment..." -ForegroundColor Cyan
+$VerifyUrl = "${PublicUrl}?ai_verify=1&seed=demo-001"
+node tools/check-ai-contract.mjs "--url=$VerifyUrl"
+
+if ($LASTEXITCODE -ne 0) {
+  throw "Remote verification failed. Check whether Nginx serves src/styles/live.css as text/css and src/live-sim.mjs as JavaScript instead of HTML fallback."
+}
+
+Write-Host "Deploy complete. Open: $PublicUrl" -ForegroundColor Green
