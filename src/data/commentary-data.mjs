@@ -1,5 +1,5 @@
 /* =========================================================
-   commentary-data.js
+   commentary-data.mjs
    语料库：基于 ESPN G4 真实 play-by-play（498条 / 58种事件类型）提炼
    - 两队真实轮换名单 + 能力值（off 进攻 / thr 三分倾向 / def 防守 / reb 篮板 / pg 组织）
    - 中文解说模板（虎扑风格），按事件类型组织
@@ -7,7 +7,7 @@
 
 /* 花名册 = 2026 总决赛 G4 真实上过场球员（按 ESPN box score 出场时间排序，
    前 5 名为真实首发；DNP 球员不收录）。能力值依据各人真实定位与系列赛表现标定。*/
-const ROSTERS = {
+export const ROSTERS = {
   knicks: {
     name: "尼克斯", short: "NY", color: "#1d428a", accent: "#f58426",
     players: [
@@ -47,7 +47,7 @@ const ROSTERS = {
 
 /* 前四场 ESPN boxscore 提取的真实轮换分钟目标（G1-G4 平均）。
    引擎会按这些目标自动换人，避免出现主力 47 分钟、替补 0 分钟的失真局面。 */
-const ROTATION_TARGET_MIN = {
+export const ROTATION_TARGET_MIN = {
   knicks: {
     brunson: 38.5, anunoby: 36.8, towns: 33.0, bridges: 31.5, hart: 28.2,
     shamet: 26.8, mcbride: 13.2, alvarado: 12.2, robinson: 11.8, clarkson: 6.0,
@@ -67,7 +67,7 @@ const ROTATION_TARGET_MIN = {
      防守以文班坐镇禁区收缩护框为核心。
    用于：开局默认战术 + 对手 AI 选择战术时的“球队风格”倾向池。
    ========================================================= */
-const TEAM_TACTICS = {
+export const TEAM_TACTICS = {
   knicks: {
     tag: "突分传导 + 布伦森单打 · 弹性换防",
     intro: "迈克·布朗体系：球的快速转移与突分喷洒找空位射手，关键球交给布伦森单打；防守端弹性十足，引导持球人向边线、必要时换防或包夹。",
@@ -86,7 +86,7 @@ const TEAM_TACTICS = {
 
 // 投篮风格描述（命中时套用），按【动作形态】细分，虎扑解说腔
 // 选用哪一类由球员画像 PLAYER_STYLE 决定，而非随机套模板
-const SHOT_FLAVOR = {
+export const SHOT_FLAVOR = {
   // —— 三分：前四场真实高频包括 Jump Shot / Step Back Jump Shot / Pullup Jump Shot ——
   catch3: [
     "{P}底角接球，三分稳稳命中！",
@@ -182,7 +182,7 @@ const SHOT_FLAVOR = {
      dunk   扣篮倾向(0=从不扣篮)  blk    盖帽天赋   stl 抢断天赋
    ——刻意贴近 2026 这套阵容的真实风格——
    ========================================================= */
-const PLAYER_STYLE = {
+export const PLAYER_STYLE = {
   // 尼克斯
   brunson:  { pull3:3,  catch3:1, mid:5,   post:2,   floater:4, layup:5, dunk:0,   blk:0.3, stl:1.2 }, // 关键先生：后撤步+中投+抛投，从不扣篮
   bridges:  { pull3:1.5,catch3:5, mid:2,   post:0.3, floater:1, layup:3, dunk:2,   blk:0.9, stl:1.6 }, // 3D：定点三分为主，偶尔空切扣
@@ -210,7 +210,7 @@ const PLAYER_STYLE = {
 
 /* 球员招牌动作：选定某类出手后有概率改用专属解说，强化辨识度
    结构 id → { 出手类型key: [文案...] }                          */
-const SIGNATURE = {
+export const SIGNATURE = {
   brunson: {
     pull3:    ["{P}招牌的后撤步三分！这就是关键先生的答案！"],
     pullup_mid:["{P}低重心连续胯下后，急停中投命中——布伦森的吃饭家伙！"],
@@ -229,7 +229,7 @@ const SIGNATURE = {
 };
 
 // 各类事件中文模板
-const TEMPLATES = {
+export const TEMPLATES = {
   miss_three: [
     "{P}三分出手——不中，篮筐弹出。",
     "{P}三分远投偏出，没进。",
@@ -290,12 +290,12 @@ const TEMPLATES = {
 };
 
 // 主场氛围配置：纽约是高压声浪，圣城是文班信仰和组织化助威
-const HOME_COURT_PROFILE = {
+export const HOME_COURT_PROFILE = {
   knicks: { arena: "麦迪逊广场花园", shortArena: "MSG", style: "pressure", tag: "纽约高压声浪" },
   spurs: { arena: "Frost Bank Center", shortArena: "圣城主场", style: "belief", tag: "圣城信仰助威" },
 };
 
-const HOME_FLAVOR = {
+export const HOME_FLAVOR = {
   knicks: {
     opening: [
       "麦迪逊广场花园灯光暗下，橙蓝色毛巾铺满看台，纽约今晚像一口沸腾的大锅。",
@@ -432,7 +432,7 @@ const HOME_FLAVOR = {
 };
 
 // 关键时刻（末节决战）专属高燃文案
-const OFFICIATING_FLAVOR = {
+export const OFFICIATING_FLAVOR = {
   scaleShift: [
     "裁判这段时间尺度明显变紧，{T}连续冲击篮下开始得到哨声。",
     "下半场身体接触越来越多，裁判开始强调手部动作和圆柱体。",
@@ -457,7 +457,7 @@ const OFFICIATING_FLAVOR = {
   ],
 };
 
-const CLUTCH_FLAVOR = [
+export const CLUTCH_FLAVOR = [
   "全场屏住呼吸！",
   "麦迪逊广场花园彻底炸了！",
   "决定胜负的时刻！",
@@ -468,7 +468,7 @@ const CLUTCH_FLAVOR = [
    教练战术体系（核心玩法：见招拆招）
    进攻 6 套 / 防守 6 套，彼此存在克制关系。
    ========================================================= */
-const OFF_SCHEMES = {
+export const OFF_SCHEMES = {
   balanced:  { name: "均衡进攻", icon: "⚖️", desc: "内外均衡，按机会出手，无明显短板" },
   inside:    { name: "强打内线", icon: "🏋️", desc: "主攻禁区、多造杀伤；怕联防与护框" },
   perimeter: { name: "外线火力", icon: "🎯", desc: "拉开空间三分发炮；专破联防/收缩" },
@@ -476,7 +476,7 @@ const OFF_SCHEMES = {
   iso:       { name: "巨星单打", icon: "👑", desc: "核心持球强攻；怕包夹与联防" },
   motion:    { name: "团队传导", icon: "🕸️", desc: "多传导找空位、助攻多；专破紧逼/包夹" },
 };
-const DEF_SCHEMES = {
+export const DEF_SCHEMES = {
   man:    { name: "人盯人",   icon: "🧍", desc: "均衡盯防，无强项也无明显漏洞" },
   zone:   { name: "联防",     icon: "🛡️", desc: "收缩禁区限制突破/单打；怕外线投射" },
   press:  { name: "全场紧逼", icon: "🔥", desc: "逼抢制造失误；费体力，怕传导/快攻" },
@@ -487,7 +487,7 @@ const DEF_SCHEMES = {
 
 // 防守战术对“进攻方”的基础影响（命中/失误/盖帽/造犯规等）
 // makeRim/make3/makeMid: 命中率加成(小数)；to:失误率加成；blk:被盖加成；star:对核心命中加成；other:对非核心加成
-const DEF_BASE = {
+export const DEF_BASE = {
   man:    { makeRim: 0,     make3: 0,     makeMid: 0,    to: 0,    blk: 0,    star: 0,     other: 0 },
   zone:   { makeRim:-0.06,  make3:+0.045, makeMid:-0.02, to:+0.01, blk:+0.02, star: 0,     other: 0 },
   press:  { makeRim:+0.02,  make3:+0.03,  makeMid:+0.01, to:+0.055,blk: 0,    star: 0,     other: 0 },
@@ -498,7 +498,7 @@ const DEF_BASE = {
 
 // 进攻战术 × 防守战术 的“克制修正”（加到进攻方综合命中上，正=进攻方占优）
 // 见招拆招的核心：选对克制战术能显著加成，被克制则吃亏。
-const MATCHUP = {
+export const MATCHUP = {
   inside:    { zone:-0.06, paint:-0.07, press:+0.05, double:+0.02, man: 0,    switch:-0.01 },
   perimeter: { zone:+0.08, paint:+0.07, press:+0.04, double:+0.01, man: 0,    switch:-0.02 },
   iso:       { zone:-0.06, paint:-0.01, press:+0.03, double:-0.10, man:+0.03, switch:-0.02 },
@@ -508,7 +508,7 @@ const MATCHUP = {
 };
 
 // 变阵 / 战术播报文案
-const SCHEME_FLAVOR = {
+export const SCHEME_FLAVOR = {
   myOff:  "📋 我方改打【{N}】：{D}",
   myDef:  "🛡️ 我方防守切换【{N}】：{D}",
   oppOff: "⚔️ {T}祭出【{N}】进攻！",

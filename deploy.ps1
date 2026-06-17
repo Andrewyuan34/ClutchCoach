@@ -5,11 +5,18 @@ $RemoteDir = "/var/www/nba-live"
 $RemoteTarget = "${Server}:${RemoteDir}/"
 
 $Files = @(
+  "live.html",
+  "src",
+  "tools",
+  "docs",
+  "README.md"
+)
+
+$ObsoleteFiles = @(
   "commentary-data.js",
   "game.js",
   "index.html",
   "live-sim.js",
-  "live.html",
   "series-pbp-data.js",
   "style.css"
 )
@@ -21,8 +28,16 @@ foreach ($file in $Files) {
   }
 }
 
+Write-Host "Removing obsolete remote files..." -ForegroundColor Cyan
+$obsoleteArgs = ($ObsoleteFiles | ForEach-Object { "'" + $_ + "'" }) -join " "
+ssh $Server "cd '$RemoteDir' && rm -f $obsoleteArgs"
+
+if ($LASTEXITCODE -ne 0) {
+  throw "Remote cleanup failed. Please check SSH access or server permissions."
+}
+
 Write-Host "Uploading to $RemoteTarget" -ForegroundColor Cyan
-scp @Files $RemoteTarget
+scp -r @Files $RemoteTarget
 
 if ($LASTEXITCODE -ne 0) {
   throw "Upload failed. Please check network, password, or server permissions."

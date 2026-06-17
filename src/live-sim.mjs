@@ -1,5 +1,5 @@
 /* =========================================================
-   live-sim.js — 文字直播生成引擎 + 教练指挥系统
+   live-sim.mjs — 文字直播生成引擎 + 教练指挥系统
    核心玩法：你是主教练 ——
      · 实时切换 进攻/防守 战术，与对手「见招拆招」(战术相互克制)
      · 管理体力，主动换人轮换
@@ -7,111 +7,51 @@
    每条直播事件都会实时累加到对应球员的 box score。
    ========================================================= */
 
-const $ = (id) => document.getElementById(id);
-const rand = (a) => a[Math.floor(Math.random() * a.length)];
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-const fill = (tpl, map) => tpl.replace(/\{(\w)\}/g, (_, k) => map[k] ?? "");
+import {
+  ROSTERS,
+  ROTATION_TARGET_MIN,
+  TEAM_TACTICS,
+  SHOT_FLAVOR,
+  PLAYER_STYLE,
+  SIGNATURE,
+  TEMPLATES,
+  HOME_COURT_PROFILE,
+  HOME_FLAVOR,
+  OFFICIATING_FLAVOR,
+  CLUTCH_FLAVOR,
+  OFF_SCHEMES,
+  DEF_SCHEMES,
+  DEF_BASE,
+  MATCHUP,
+  SCHEME_FLAVOR,
+} from "./data/commentary-data.mjs";
+import { SERIES_PBP_LIBRARY, SERIES_ATMOSPHERE } from "./data/series-pbp-data.mjs";
+import { S, QUARTERS, QUARTER_SECONDS, HOME_BY_GAME, STAT_KEYS, CLUTCH_MAP } from "./state.mjs";
+import { $, rand, clamp, fill } from "./utils.mjs";
+import { initAiVerification, installAiDeterminism, syncAiVerification } from "./ai-verify.mjs";
 
-// ----------------- 全局比赛状态 -----------------
-const S = {
-  myTeam: null, oppTeam: null,
-  seriesWins: { knicks: 3, spurs: 1 },
-  gameNo: 5,
-  score: { knicks: 0, spurs: 0 },
-  quarter: 1,
-  clock: 720,           // 真实每节 12:00 = 720 秒
-  possessionTeam: null,
-  running: false,
-  speed: 2600,          // 每条直播间隔(ms)，默认最慢，方便新手读懂局势
-  fouls: { knicks: 0, spurs: 0 },
-  momentum: { knicks: 0, spurs: 0 },
-  timer: null,
-  decisionPending: false,
-  boost: { knicks: 0, spurs: 0 },
-  gameOver: false,
-  onCourt: { knicks: [], spurs: [] },
-  scheme: {                                  // 两队当前战术
-    knicks: { off: "balanced", def: "man" },
-    spurs:  { off: "balanced", def: "man" },
-  },
-  view: "feed",          // feed | box | cmd
-  subSel: null,          // 换人选中的场上球员 {team,id}
-  tickCount: 0,
-  subWindow: false,      // 是否处于换人/调整窗口（节间休息 / 任意一方叫暂停）
-  subBy: null,           // 本次暂停由谁叫（"knicks" / "spurs" / null=节间）
-  resumeLabel: "▶ 继续比赛",
-  subCountdown: 0,       // 布置倒计时（真实秒）
-  subTimer: null,        // 倒计时句柄
-  timeouts: { knicks: 7, spurs: 7 },  // NBA规则：常规时间7次；第四节最多保留4次；最后3分钟最多2次；加时每队2次
-  timeoutRuleFlags: {},  // 记录第四节/加时暂停规则是否已触发，避免重复提示
-  oppTOQ: 0,             // 对手本节已叫暂停次数（限频）
-  run: { team: null, pts: 0 },        // 连续得分流（一波流追踪）
-  rotationDone: {},      // 已执行的固定轮换窗口，避免连续死球反复换
-  refFrustration: { knicks: 0, spurs: 0 }, // 对吹罚/漏判产生的心理波动
-  clutchAftershock: { team: null, val: 0, ticks: 0, kind: "" }, // 关键时刻余震
-  homeTeam: null, awayTeam: null, arena: "", crowdHeat: 0, // 主场与声浪
-  coachIdle: 0,          // 玩家连续未进行有效指挥的回合数
-  targetLevel: 0,        // 被对手摸透/针对的惩罚层数
-  coachPrompt: null,     // 当前「该你出手了」提示
-  lastPromptType: "",
-  lastPromptTick: -99,
-  pendingCoachEffect: null, // 操作后 1~2 回合的因果反馈
-  coachIntroOpen: false,
-  tutorialOpen: false,
-  tutorialIndex: 0,
-  coachTask: null,
-  coachTaskResult: null,
-  coachStats: null,
-  openingStarted: false,
-  assistantMode: false,    // 助教模式：首局手把手强引导
-  assistantStep: "",
-  assistantTarget: null,
-  assistantSubPlan: null,
-  crisisPending: false,    // 正式比赛的「场边决断」
-  crisisLastTick: -99,
-  crisisGamble: null,
-  rookieArc: null,         // 第一局教学剧情：操作有明显反馈，最后收到关键球
-};
+installAiDeterminism();
 
-const QUARTERS = 4;
-const QUARTER_SECONDS = 720;   // 真实每节 12 分钟
-const HOME_BY_GAME = { 1: "spurs", 2: "spurs", 3: "knicks", 4: "knicks", 5: "spurs", 6: "knicks", 7: "spurs" };
-
-/* 真实校准基准（每队每场 48 分钟，NBA 联盟平均量级）：
-   得分~113 · 投篮41-89 · 三分12-37 · 罚球17-22 · 篮板43 · 助攻26
-   失误14 · 抢断8 · 盖帽5 · 回合(pace)~99 · 5人合计出场240分钟
-   → 通过「真实回合数 + 每回合用时」自然产生，无需虚拟换算。 */
-
-const STAT_KEYS = ["sec", "pts", "fgm", "fga", "tpm", "tpa", "ftm", "fta", "oreb", "dreb", "ast", "stl", "blk", "tov", "pf"];
-
-// 大心脏系数：关键时刻成功率加成（>1 抗压、<1 易手软）
-const CLUTCH_MAP = {
-  brunson: 1.15, anunoby: 1.05, clarkson: 1.05, towns: 1.0, bridges: 1.0,
-  shamet: 1.0, hart: 1.0, mcbride: 0.95, alvarado: 0.95, sochan: 0.95,
-  robinson: 0.9, hukporti: 0.9,
-  wemby: 1.1, fox: 1.05, castle: 1.0, vassell: 1.0, champ: 1.0,
-  harper: 0.95, keldon: 0.95, bryant: 0.9, kornet: 0.9,
-};
-
-// ----------------- 启动流程 -----------------
+// ----------------- Bootstrap -----------------
 function setAppHeight() {
   const vv = window.visualViewport;
   const h = vv && vv.height ? vv.height : window.innerHeight;
   document.documentElement.style.setProperty("--app-height", `${Math.round(h)}px`);
+  if (S.tutorialOpen) requestAnimationFrame(updateAssistantCoachMark);
 }
 
 function blockAssistantWrongView(view) {
   if (!S.assistantMode || !S.tutorialOpen) return false;
   if (S.assistantStep === ASSISTANT_STEPS.SITUATION && view !== "feed") {
-    focusCoachArea("situation-line");
+    focusCoachArea(currentAssistantTargetId() || "situation-line");
     return true;
   }
   if (S.assistantStep === ASSISTANT_STEPS.ENTER_CMD && view !== "cmd") {
-    focusCoachArea("tab-cmd");
+    focusCoachArea(currentAssistantTargetId() || "tab-cmd");
     return true;
   }
-  if ((S.assistantStep === ASSISTANT_STEPS.SCHEME || S.assistantStep === ASSISTANT_STEPS.SUB) && view !== "cmd") {
-    focusCoachArea(S.assistantStep === ASSISTANT_STEPS.SCHEME ? "coach-advice" : "sub-advice");
+  if ((S.assistantStep === ASSISTANT_STEPS.SCHEME || S.assistantStep === ASSISTANT_STEPS.SUB_OUT || S.assistantStep === ASSISTANT_STEPS.SUB_IN) && view !== "cmd") {
+    focusCoachArea(currentAssistantTargetId() || "cmd-wrap");
     return true;
   }
   return false;
@@ -125,6 +65,9 @@ function startApp() {
     window.visualViewport.addEventListener("resize", setAppHeight);
     window.visualViewport.addEventListener("scroll", setAppHeight);
   }
+  document.addEventListener("scroll", () => {
+    if (S.tutorialOpen) requestAnimationFrame(updateAssistantCoachMark);
+  }, true);
   document.addEventListener("gesturestart", (e) => e.preventDefault(), { passive: false });
   document.querySelectorAll(".pick-team").forEach((btn) => {
     btn.onclick = () => {
@@ -153,18 +96,23 @@ function startApp() {
     setView("cmd");
     onAssistantGameUiClick("tab-cmd");
   };
-  if ($("coach-prompt")) $("coach-prompt").onclick = () => openCoachPrompt();
+  if ($("coach-prompt")) $("coach-prompt").onclick = () => {
+    if (S.assistantMode && S.assistantStep === ASSISTANT_STEPS.ENTER_CMD) { focusCoachArea("tab-cmd"); return; }
+    openCoachPrompt();
+  };
   if ($("situation-line")) $("situation-line").onclick = () => onAssistantGameUiClick("situation-line");
   if ($("coach-intro-start")) $("coach-intro-start").onclick = () => startCoachIntro(false);
   if ($("coach-intro-tutorial")) $("coach-intro-tutorial").onclick = () => startCoachIntro(true);
   if ($("tutorial-next")) $("tutorial-next").onclick = () => onAssistantNext();
   setupBoxScrollLock();
   showScreen("select");
+  initAiVerification();
 }
 
 function showScreen(name) {
   document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
   $("screen-" + name).classList.add("active");
+  syncAiVerification(`screen:${name}`);
 }
 
 function setupBoxScrollLock() {
@@ -378,7 +326,7 @@ function setupHomeCourt() {
 
 function makeRookieArc() {
   return {
-    enabled: S.gameNo === 5,
+    enabled: false, // 只在首局进入助教模式时开启教学爽局；正常开局不改难度
     spark: 0,
     sparkNoted: false,
     finalArmed: false,
@@ -479,7 +427,8 @@ const ASSISTANT_STEPS = {
   SCHEME: "scheme",
   WAIT_TIMEOUT: "waitTimeout",
   TIMEOUT: "timeout",
-  SUB: "sub",
+  SUB_OUT: "subOut",
+  SUB_IN: "subIn",
   FINISH: "finish",
 };
 
@@ -506,6 +455,7 @@ function showCoachIntro() {
   $("coach-intro-tutorial").classList.toggle("hidden", !done);
   modal.classList.remove("hidden");
   updateScoreboard();
+  syncAiVerification("coach:intro");
 }
 
 function startCoachIntro(forceTutorial) {
@@ -518,6 +468,7 @@ function startCoachIntro(forceTutorial) {
 
 function startAssistantTutorial() {
   S.assistantMode = true;
+  if (S.rookieArc && S.gameNo === 5) S.rookieArc.enabled = true;
   S.assistantStep = ASSISTANT_STEPS.SITUATION;
   S.assistantTarget = null;
   S.assistantSubPlan = null;
@@ -525,9 +476,30 @@ function startAssistantTutorial() {
   showAssistantStep(ASSISTANT_STEPS.SITUATION);
 }
 
+function assistantStepOrder() {
+  return [ASSISTANT_STEPS.SITUATION, ASSISTANT_STEPS.ENTER_CMD, ASSISTANT_STEPS.SCHEME, ASSISTANT_STEPS.TIMEOUT, ASSISTANT_STEPS.SUB_OUT, ASSISTANT_STEPS.SUB_IN, ASSISTANT_STEPS.FINISH];
+}
 function assistantStepIndex(step) {
-  const order = [ASSISTANT_STEPS.SITUATION, ASSISTANT_STEPS.ENTER_CMD, ASSISTANT_STEPS.SCHEME, ASSISTANT_STEPS.TIMEOUT, ASSISTANT_STEPS.SUB, ASSISTANT_STEPS.FINISH];
+  const order = assistantStepOrder();
   return Math.max(0, order.indexOf(step)) + 1;
+}
+
+function currentAssistantTargetId() {
+  if (S.assistantStep === ASSISTANT_STEPS.SITUATION) return "situation-line";
+  if (S.assistantStep === ASSISTANT_STEPS.ENTER_CMD) return "tab-cmd";
+  if (S.assistantStep === ASSISTANT_STEPS.TIMEOUT) return "btn-pause";
+  if (S.assistantStep === ASSISTANT_STEPS.SCHEME && S.assistantTarget) return `coach-scheme-${S.assistantTarget.kind}-${S.assistantTarget.key}`;
+  if (S.assistantStep === ASSISTANT_STEPS.SUB_OUT && S.assistantSubPlan) return `coach-player-${S.assistantSubPlan.outId}`;
+  if (S.assistantStep === ASSISTANT_STEPS.SUB_IN && S.assistantSubPlan) return `coach-player-${S.assistantSubPlan.inId}`;
+  return "";
+}
+
+function assistantTargetType(step) {
+  if (step === ASSISTANT_STEPS.ENTER_CMD) return "tab";
+  if (step === ASSISTANT_STEPS.TIMEOUT) return "button";
+  if (step === ASSISTANT_STEPS.SCHEME) return "scheme";
+  if (step === ASSISTANT_STEPS.SUB_OUT || step === ASSISTANT_STEPS.SUB_IN) return "player";
+  return "bar";
 }
 
 function showAssistantStep(step) {
@@ -536,63 +508,76 @@ function showAssistantStep(step) {
   S.tutorialOpen = true;
   S.assistantStep = step;
   clearTimeout(S.timer);
-  const total = 6;
-  let title = "助教模式", body = "", target = "", btn = "继续", docked = true, topDock = false;
+  const total = assistantStepOrder().length;
+  let title = "助教模式", body = "", btn = "继续";
 
   if (step === ASSISTANT_STEPS.SITUATION) {
-    docked = true; target = "situation-line"; btn = "点高亮局势条";
+    btn = "点高亮局势条";
     title = "先看比分下面那句话";
-    body = "它会告诉你现在是顺风、拉锯还是警报。别急着看数据，先点一下那条黄色局势提示。";
+    body = "看这条局势。它会告诉你现在该不该出手。点一下。";
   } else if (step === ASSISTANT_STEPS.ENTER_CMD) {
-    docked = true; target = "tab-cmd"; btn = "点高亮指挥台";
+    btn = "点高亮指挥台";
     title = "现在该你站出来";
-    body = "场上已经有问题了。别点这里，去点上面的【指挥台】标签，进教练席处理。";
+    body = "对手起势了。点【指挥台】，你要做调整。";
   } else if (step === ASSISTANT_STEPS.SCHEME) {
-    docked = true; target = "coach-advice"; btn = "点击高亮战术继续";
+    btn = "点击高亮战术";
     title = "第一次调战术";
-    body = "这里不是复杂菜单，这是你的教练席。助教会给建议，但不是命令。现在请点击高亮的建议战术，看看直播怎么反馈你的决定。";
+    body = "这张战术是助教建议。点它，看看场上反馈。";
     setupAssistantSchemeTarget();
   } else if (step === ASSISTANT_STEPS.TIMEOUT) {
-    docked = true; topDock = true; target = "btn-pause"; btn = "点击高亮暂停按钮";
+    btn = "点击高亮暂停按钮";
     title = "第一次叫暂停";
-    body = "现在适合叫暂停。暂停不是拖时间按钮，它能打断对手一波流、稳住情绪，并给你换人和调战术窗口。请点击高亮的暂停按钮。";
-  } else if (step === ASSISTANT_STEPS.SUB) {
-    docked = true; topDock = true; target = "sub-advice"; btn = "按高亮完成换人";
-    title = "第一次换人";
-    body = "暂停期间可以安全换人。体力会影响命中率、防守和失误。请先点高亮的场上球员，再点高亮替补。";
+    body = "现在叫暂停，打断对面节奏，并打开换人窗口。";
+  } else if (step === ASSISTANT_STEPS.SUB_OUT) {
+    btn = "点高亮场上球员";
+    title = "先选要换下的人";
+    body = "体力会影响命中、防守和失误。先点高亮的场上球员。";
+    setupAssistantSubPlan();
+  } else if (step === ASSISTANT_STEPS.SUB_IN) {
+    btn = "点高亮替补";
+    title = "再选替补上场";
+    body = "再点这个替补，完成第一次轮换。";
     setupAssistantSubPlan();
   } else if (step === ASSISTANT_STEPS.FINISH) {
-    docked = false; target = "situation-line"; btn = "交给我吧";
+    btn = "交给我吧";
     title = "可以了，教练";
-    body = "你已经会最重要的事：看局势、进指挥台、调战术、叫暂停、换人。接下来我只在危险时提醒，不再强制操作。";
+    body = "你已经会看局势、进指挥台、调战术、叫暂停、换人。接下来我只在危险时提醒。";
   }
 
-  modal.classList.toggle("coach-docked", docked);
-  modal.classList.toggle("coach-top", topDock);
+  const gameClickStep = step !== ASSISTANT_STEPS.FINISH;
+  modal.classList.toggle("coach-mark-modal", gameClickStep);
+  modal.classList.toggle("coach-docked", false);
+  modal.classList.toggle("coach-top", false);
   modal.classList.remove("hidden");
   $("tutorial-step").textContent = `${assistantStepIndex(step)} / ${total}`;
   $("tutorial-title").textContent = title;
   $("tutorial-body").textContent = body;
   $("tutorial-next").textContent = btn;
-  const gameClickStep = step !== ASSISTANT_STEPS.FINISH;
   $("tutorial-next").disabled = gameClickStep;
   $("tutorial-next").classList.toggle("hidden", gameClickStep);
   $("tutorial-dots").innerHTML = Array.from({ length: total }, (_, i) => `<i class="${i < assistantStepIndex(step) ? "on" : ""}"></i>`).join("");
+
   clearAssistantHighlights();
-  if (step === ASSISTANT_STEPS.SCHEME) renderCmd();
-  if (step === ASSISTANT_STEPS.SUB) renderSubs();
-  if (target && step !== ASSISTANT_STEPS.SCHEME && step !== ASSISTANT_STEPS.SUB) {
+  const target = currentAssistantTargetId();
+  if (target && gameClickStep) {
     const el = $(target);
-    if (el) el.classList.add("tutorial-required");
+    if (el) el.classList.add("tutorial-required", "coach-target-live");
+    setTimeout(() => showAssistantCoachMark(target, assistantTargetType(step)), 70);
+  } else {
+    clearCoachMark();
   }
-  if (target) setTimeout(() => focusCoachArea(target), 60);
+  syncAiVerification(`tutorial:${step}`);
 }
 
 function hideAssistantModal() {
   const modal = $("coach-tutorial-modal");
-  if (modal) modal.classList.add("hidden");
+  if (modal) {
+    modal.classList.add("hidden");
+    modal.classList.remove("coach-mark-modal", "coach-docked", "coach-top");
+  }
   S.tutorialOpen = false;
   clearAssistantHighlights();
+  syncAiVerification("tutorial:hidden");
 }
 
 function onAssistantGameUiClick(id) {
@@ -858,6 +843,10 @@ function requestPlayerTimeout(fromCrisis = false) {
 // 「叫暂停 / 继续」按钮
 function togglePause() {
   if (S.gameOver) return;
+  if (S.assistantMode && S.tutorialOpen && S.assistantStep !== ASSISTANT_STEPS.TIMEOUT) {
+    focusCoachArea(currentAssistantTargetId() || "btn-pause");
+    return;
+  }
   if (S.subWindow || (!S.running && !S.crisisPending)) {
     closeSubWindow();
   } else if (!S.crisisPending) {
@@ -1370,6 +1359,11 @@ function pushFeed(team, text, opt = {}) {
   const feed = $("feed");
   const row = document.createElement("div");
   row.className = "feed-row";
+  row.setAttribute("data-testid", "feed-row");
+  row.dataset.aiTeam = team;
+  row.dataset.aiQuarter = String(S.quarter);
+  row.dataset.aiClock = fmtClock(S.clock);
+  row.dataset.aiScore = `${S.score.knicks}-${S.score.spurs}`;
   if (opt.score) row.classList.add(team === S.myTeam ? "score-mine" : "score-opp");
   if (opt.big) row.classList.add("big-play");
   if (opt.mini) row.classList.add("mini");
@@ -1390,6 +1384,7 @@ function pushFeed(team, text, opt = {}) {
   feed.appendChild(row);
   feed.scrollTop = feed.scrollHeight;
   while (feed.children.length > 60) feed.removeChild(feed.firstChild);
+  syncAiVerification("feed:push");
 }
 
 function fmtClock(sec) {
@@ -1540,16 +1535,107 @@ function openCoachPrompt() {
   }
 }
 
+function visualViewportBox() {
+  const vv = window.visualViewport;
+  return {
+    left: vv && Number.isFinite(vv.offsetLeft) ? vv.offsetLeft : 0,
+    top: vv && Number.isFinite(vv.offsetTop) ? vv.offsetTop : 0,
+    width: vv && vv.width ? vv.width : window.innerWidth,
+    height: vv && vv.height ? vv.height : window.innerHeight,
+  };
+}
+
+function ensureCoachSpotlight() {
+  let spot = document.getElementById("coach-spotlight");
+  if (!spot) {
+    spot = document.createElement("div");
+    spot.id = "coach-spotlight";
+    spot.className = "coach-spotlight hidden";
+    document.body.appendChild(spot);
+  }
+  return spot;
+}
+
+function placeTutorialCard(targetId) {
+  const modal = $("coach-tutorial-modal"), el = $(targetId);
+  if (!modal || !el || modal.classList.contains("hidden")) return;
+  const card = modal.querySelector(".coach-card");
+  if (!card) return;
+  const vv = visualViewportBox();
+  const rect = el.getBoundingClientRect();
+  const margin = 10, gap = 10;
+  const cardW = Math.min(360, Math.max(260, vv.width - margin * 2));
+  card.style.width = `${cardW}px`;
+  const cardH = Math.min(card.scrollHeight || 150, vv.height * 0.36);
+  const spaceTop = rect.top - vv.top - margin;
+  const spaceBottom = vv.top + vv.height - rect.bottom - margin;
+  const putBelow = spaceBottom >= Math.min(cardH + gap, 120) || spaceBottom >= spaceTop;
+  const top = clamp(putBelow ? rect.bottom + gap : rect.top - cardH - gap, vv.top + margin, vv.top + vv.height - cardH - margin);
+  const left = clamp(rect.left + rect.width / 2 - cardW / 2, vv.left + margin, vv.left + vv.width - cardW - margin);
+  modal.style.setProperty("--coach-card-left", `${Math.round(left)}px`);
+  modal.style.setProperty("--coach-card-top", `${Math.round(top)}px`);
+  modal.style.setProperty("--coach-card-width", `${Math.round(cardW)}px`);
+  modal.style.setProperty("--coach-card-max-height", `${Math.round(Math.min(220, vv.height * 0.34))}px`);
+}
+
+function updateAssistantCoachMark() {
+  const modal = $("coach-tutorial-modal");
+  const targetId = modal && modal.dataset.targetId;
+  if (!S.tutorialOpen || !targetId) return;
+  const el = $(targetId);
+  if (!el) return;
+  const spot = ensureCoachSpotlight();
+  const vv = visualViewportBox();
+  const rect = el.getBoundingClientRect();
+  const type = modal.dataset.targetType || "bar";
+  const pad = type === "tab" ? 4 : (type === "player" || type === "scheme" ? 6 : 5);
+  const left = Math.max(vv.left + 4, rect.left - pad);
+  const top = Math.max(vv.top + 4, rect.top - pad);
+  const right = Math.min(vv.left + vv.width - 4, rect.right + pad);
+  const bottom = Math.min(vv.top + vv.height - 4, rect.bottom + pad);
+  spot.className = `coach-spotlight ${type}`;
+  spot.style.left = `${Math.round(left)}px`;
+  spot.style.top = `${Math.round(top)}px`;
+  spot.style.width = `${Math.max(28, Math.round(right - left))}px`;
+  spot.style.height = `${Math.max(28, Math.round(bottom - top))}px`;
+  placeTutorialCard(targetId);
+}
+
+function showAssistantCoachMark(targetId, type) {
+  const el = $(targetId), modal = $("coach-tutorial-modal");
+  if (!el || !modal) return;
+  modal.dataset.targetId = targetId;
+  modal.dataset.targetType = type || "bar";
+  el.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+  setTimeout(updateAssistantCoachMark, 260);
+  setTimeout(updateAssistantCoachMark, 520);
+}
+
+function clearCoachMark() {
+  const spot = document.getElementById("coach-spotlight");
+  if (spot) spot.classList.add("hidden");
+  const modal = $("coach-tutorial-modal");
+  if (modal) {
+    delete modal.dataset.targetId;
+    delete modal.dataset.targetType;
+  }
+}
+
 function focusCoachArea(id) {
   const el = $(id);
   if (!el) return;
+  el.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+  if (S.tutorialOpen) {
+    showAssistantCoachMark(currentAssistantTargetId() || id, assistantTargetType(S.assistantStep));
+    return;
+  }
   el.classList.add("coach-focus");
-  el.scrollIntoView({ block: "center", behavior: "smooth" });
   setTimeout(() => el.classList.remove("coach-focus"), 1400);
 }
 
 function clearAssistantHighlights() {
-  document.querySelectorAll(".tutorial-required").forEach((el) => el.classList.remove("tutorial-required"));
+  document.querySelectorAll(".tutorial-required,.coach-target-live").forEach((el) => el.classList.remove("tutorial-required", "coach-target-live"));
+  clearCoachMark();
 }
 
 function setupAssistantSchemeTarget() {
@@ -1616,14 +1702,14 @@ function setupAssistantSubPlan() {
 
 function assistantAfterTimeout() {
   if (!S.assistantMode || S.assistantStep !== ASSISTANT_STEPS.TIMEOUT) return;
-  S.assistantStep = ASSISTANT_STEPS.SUB;
+  S.assistantStep = ASSISTANT_STEPS.SUB_OUT;
   S.subCountdown = Math.max(S.subCountdown, 45);
   updatePauseBtn();
-  setTimeout(() => showAssistantStep(ASSISTANT_STEPS.SUB), 80);
+  setTimeout(() => showAssistantStep(ASSISTANT_STEPS.SUB_OUT), 80);
 }
 
 function assistantAfterSub(outId, inId) {
-  if (!S.assistantMode || S.assistantStep !== ASSISTANT_STEPS.SUB) return;
+  if (!S.assistantMode || S.assistantStep !== ASSISTANT_STEPS.SUB_IN) return;
   const plan = S.assistantSubPlan;
   if (plan && (plan.outId !== outId || plan.inId !== inId)) return;
   S.assistantStep = ASSISTANT_STEPS.FINISH;
@@ -1775,6 +1861,7 @@ function setView(v) {
   if (v === "box") renderBox();
   if (v === "cmd") renderCmd();
   renderCoachPrompt();
+  syncAiVerification(`view:${v}`);
 }
 
 // ----------------- box score -----------------
@@ -1849,6 +1936,7 @@ function updateScoreboard() {
   renderCoachUx();
   if (S.view === "box") renderBox();
   if (S.view === "cmd") updateStaminaBars();
+  syncAiVerification("scoreboard:update");
 }
 
 // 暂停次数显示（我方 / 对方）
@@ -1924,12 +2012,17 @@ function schemeBtn(key, info, kind, recKey) {
   const b = document.createElement("button");
   const active = S.scheme[S.myTeam][kind] === key;
   const required = S.assistantMode && S.assistantStep === ASSISTANT_STEPS.SCHEME && S.assistantTarget && S.assistantTarget.kind === kind && S.assistantTarget.key === key;
-  b.className = "sch-btn" + (active ? " active" : "") + (key === recKey ? " rec" : "") + (required ? " tutorial-required" : "");
+  b.id = `coach-scheme-${kind}-${key}`;
+  b.setAttribute("data-testid", `scheme-${kind}-${key}`);
+  b.dataset.aiSchemeKind = kind;
+  b.dataset.aiSchemeKey = key;
+  b.dataset.aiRecommended = String(key === recKey);
+  b.className = "sch-btn" + (active ? " active" : "") + (key === recKey ? " rec" : "") + (required ? " tutorial-required coach-target-live" : "");
   b.innerHTML = `<span class="sch-name">${info.icon} ${info.name}</span>` +
                 `<span class="sch-desc">${schemeShort(kind, key)}</span>`;
   b.onclick = () => {
     if (S.assistantMode && S.assistantStep === ASSISTANT_STEPS.SCHEME && S.assistantTarget && !required) {
-      focusCoachArea(S.assistantTarget.kind === "off" ? "my-off" : "my-def");
+      focusCoachArea(currentAssistantTargetId() || (S.assistantTarget.kind === "off" ? "my-off" : "my-def"));
       return;
     }
     setMyScheme(kind, key);
@@ -2092,8 +2185,16 @@ function playerChip(p, onCourt) {
   const locked = !S.subWindow;
   const ht = heatTag(p);
   const glow = ht.c === "hot" ? " hot-glow" : (ht.c === "cold" ? " cold-glow" : "");
-  const tutPlan = S.assistantMode && S.assistantStep === ASSISTANT_STEPS.SUB && S.assistantSubPlan;
-  const tut = tutPlan && ((onCourt && p.id === S.assistantSubPlan.outId) || (!onCourt && p.id === S.assistantSubPlan.inId)) ? " tutorial-required" : "";
+  const tutPlan = S.assistantMode && (S.assistantStep === ASSISTANT_STEPS.SUB_OUT || S.assistantStep === ASSISTANT_STEPS.SUB_IN) && S.assistantSubPlan;
+  const tutOut = tutPlan && S.assistantStep === ASSISTANT_STEPS.SUB_OUT && onCourt && p.id === S.assistantSubPlan.outId;
+  const tutIn = tutPlan && S.assistantStep === ASSISTANT_STEPS.SUB_IN && !onCourt && p.id === S.assistantSubPlan.inId;
+  const tut = tutOut || tutIn ? " tutorial-required coach-target-live" : "";
+  d.id = `coach-player-${p.id}`;
+  d.setAttribute("data-testid", `${onCourt ? "player-court" : "player-bench"}-${p.id}`);
+  d.dataset.aiPlayerId = p.id;
+  d.dataset.aiTeam = S.myTeam;
+  d.dataset.aiOnCourt = String(onCourt);
+  d.dataset.aiStamina = String(Math.round(p.stamina ?? 100));
   d.className = "pl-chip" + (onCourt ? " on" : " bench") + (sel ? " sel" : "") + (locked ? " locked" : "") + glow + tut;
   const col = p.stamina > 60 ? "var(--green)" : (p.stamina > 32 ? "#e8b53a" : "var(--red)");
   const tag = playerStatusTag(p, onCourt);
@@ -2111,9 +2212,22 @@ function playerChip(p, onCourt) {
 function onChipClick(p, onCourt) {
   if (!S.subWindow) return;   // 非窗口期锁定换人
   const my = S.myTeam;
-  if (S.assistantMode && S.assistantStep === ASSISTANT_STEPS.SUB && S.assistantSubPlan) {
-    if (onCourt && p.id !== S.assistantSubPlan.outId) { focusCoachArea("sub-court"); return; }
-    if (!onCourt && p.id !== S.assistantSubPlan.inId) { focusCoachArea("sub-bench"); return; }
+  if (S.assistantMode && S.assistantSubPlan) {
+    if (S.assistantStep === ASSISTANT_STEPS.SUB_OUT) {
+      if (!onCourt || p.id !== S.assistantSubPlan.outId) { focusCoachArea(currentAssistantTargetId() || "sub-court"); return; }
+      S.subSel = { team: my, id: p.id };
+      renderSubs();
+      showAssistantStep(ASSISTANT_STEPS.SUB_IN);
+      return;
+    }
+    if (S.assistantStep === ASSISTANT_STEPS.SUB_IN) {
+      if (onCourt || p.id !== S.assistantSubPlan.inId) { focusCoachArea(currentAssistantTargetId() || "sub-bench"); return; }
+      S.subSel = { team: my, id: S.assistantSubPlan.outId };
+      applySub(my, S.assistantSubPlan.outId, S.assistantSubPlan.inId, true);
+      S.subSel = null;
+      renderSubs();
+      return;
+    }
   }
   if (onCourt) {
     S.subSel = S.subSel && S.subSel.id === p.id ? null : { team: my, id: p.id };
