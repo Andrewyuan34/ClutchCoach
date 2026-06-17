@@ -25,6 +25,7 @@ export const S = {
   tickCount: 0,
   subWindow: false,      // 是否处于换人/调整窗口（节间休息 / 任意一方叫暂停）
   subBy: null,           // 本次暂停由谁叫（"knicks" / "spurs" / null=节间）
+  subWindowSchemeBase: null, // 布置窗口开始时的我方战术；窗口内多次点击只结算最终方案
   resumeLabel: "▶ 继续比赛",
   subCountdown: 0,       // 布置倒计时（真实秒）
   subTimer: null,        // 倒计时句柄
@@ -48,6 +49,7 @@ export const S = {
   coachTask: null,
   coachTaskResult: null,
   coachStats: null,
+  coachHelpOpen: false,
   openingStarted: false,
   assistantMode: false,    // 助教模式：首局手把手强引导
   assistantStep: "",
@@ -57,6 +59,7 @@ export const S = {
   crisisLastTick: -99,
   crisisGamble: null,
   rookieArc: null,         // 第一局教学剧情：操作有明显反馈，最后收到关键球
+  tactical: null,          // 战术因果层：context / adjustment / trace / AI debug
 };
 
 export const QUARTERS = 4;

@@ -68,6 +68,13 @@ tab-feed
 tab-command
 tab-box
 command-panel
+coach-help-toggle
+coach-read-panel
+coach-read-situation
+coach-read-scheme-fit
+coach-read-lineup-fit
+coach-read-risk
+coach-read-suggestion
 box-score
 pause-toggle
 coach-intro-modal
@@ -83,6 +90,14 @@ data-ai-team
 data-ai-quarter
 data-ai-clock
 data-ai-score
+data-ai-livecast-id
+data-ai-possession-id
+data-ai-context-id
+data-ai-cause-ids
+data-ai-coach-action-id
+data-ai-adjustment-id
+data-ai-adaptation-id
+data-ai-trace-source
 ```
 
 Generated command buttons use stable ids such as:
@@ -102,7 +117,27 @@ player-bench-mcbride
 - Exactly one screen is active.
 - DOM score matches simulator state.
 - Feed row count stays within the pruning limit.
+- Every feed row has a livecast trace id.
+- Tactical state exists once the verifier is initialized.
+- Selected-team lineup profiles exist after a team/game is active.
 - Required `data-testid` anchors are present.
+
+## Tactical Trace Snapshot
+
+`getState().tactical` contains a compact AI-debug view:
+
+```text
+lastPossessionContext
+lineupProfiles
+activeAdjustmentWindows
+resolvedAdjustmentWindows
+lastCoachAction
+opponentAdaptation
+livecastTrace
+debugEvents
+```
+
+This links coach actions, scheme changes, substitutions, clutch choices, opponent adaptations, and livecast rows through stable ids such as `coachActionId`, `adjustmentId`, `possessionId`, `contextId`, and `livecastId`.
 
 `getAssertSummary()` returns `{ pass, total, failed }` for quick CI-style checks.
 

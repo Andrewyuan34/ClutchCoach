@@ -29,6 +29,21 @@ import { SERIES_PBP_LIBRARY, SERIES_ATMOSPHERE } from "./data/series-pbp-data.mj
 import { S, QUARTERS, QUARTER_SECONDS, HOME_BY_GAME, STAT_KEYS, CLUTCH_MAP } from "./state.mjs";
 import { $, rand, clamp, fill } from "./utils.mjs";
 import { initAiVerification, installAiDeterminism, syncAiVerification } from "./ai-verify.mjs";
+import {
+  addCause,
+  createAdjustmentWindow,
+  createCoachAction,
+  createPossessionContext,
+  finalizePossessionContext,
+  refreshLineupProfiles,
+  registerLivecastTrace,
+  renderCoachReadModel,
+  resetTacticalState,
+  tacticalSubSuggestion,
+  traceForContext,
+  updateOpponentAdaptation,
+  noteOpponentAdaptationLivecast,
+} from "./tactical.mjs";
 
 installAiDeterminism();
 
@@ -95,6 +110,12 @@ function startApp() {
     if (blockAssistantWrongView("cmd")) return;
     setView("cmd");
     onAssistantGameUiClick("tab-cmd");
+  };
+  if ($("coach-help-toggle")) $("coach-help-toggle").onclick = () => {
+    if (S.assistantMode) return;
+    S.coachHelpOpen = !S.coachHelpOpen;
+    renderCmd();
+    syncAiVerification("coach-help:toggle");
   };
   if ($("coach-prompt")) $("coach-prompt").onclick = () => {
     if (S.assistantMode && S.assistantStep === ASSISTANT_STEPS.ENTER_CMD) { focusCoachArea("tab-cmd"); return; }
@@ -221,18 +242,41 @@ function applySub(team, outId, inId, byCoach, opt = {}) {
   const outP = ROSTERS[team].players.find((p) => p.id === outId);
   const inP = ROSTERS[team].players.find((p) => p.id === inId);
   if (!outP || !inP || isOnCourt(team, inId) || !isOnCourt(team, outId)) return false;
-  if (byCoach && team === S.myTeam) noteCoachAction("换人调整");
+  const tacticalAction = byCoach && team === S.myTeam
+    ? createCoachAction("substitution", { team, outId, inId, outName: outP.name, inName: inP.name })
+    : null;
   const now = gameElapsedMin();
   outP.lastOffAt = now;
   inP.lastOnAt = now;
   S.onCourt[team] = S.onCourt[team].map((id) => (id === outId ? inId : id));
+  refreshLineupProfiles(tacticalAction ? "coach-substitution" : "rotation");
+  let tacticalAdjustment = null;
+  if (tacticalAction) {
+    tacticalAdjustment = createAdjustmentWindow(tacticalAction, {
+      type: "substitution",
+      label: `${inP.name}换下${outP.name}`,
+      targetProblem: "lineup_fit",
+      expectedCauseIds: ["cause.lineup.fit"],
+    });
+  }
+  const subTrace = tacticalAction ? {
+    coachActionId: tacticalAction.coachActionId,
+    adjustmentId: tacticalAdjustment?.adjustmentId || "",
+    causeIds: ["cause.lineup.fit"],
+    source: "substitution",
+  } : null;
+  if (byCoach && team === S.myTeam) noteCoachAction("换人调整", subTrace);
   if (!opt.silent) {
     const tag = byCoach && team === S.myTeam ? "📋 " : "🔄 ";
-    pushFeed(team, `${tag}换人：${inP.name} 换下 ${outP.name}（体力 ${Math.round(outP.stamina)}）。`, { team, mini: true });
+    pushFeed(team, `${tag}换人：${inP.name} 换下 ${outP.name}（体力 ${Math.round(outP.stamina)}）。`, {
+      team,
+      mini: true,
+      trace: subTrace || undefined,
+    });
     maybeRichFeed("substitution", team, { T: ROSTERS[team].name, O: inP.name, P: outP.name }, 0.7);
   }
   if (byCoach && team === S.myTeam) {
-    markCoachEffect("sub", `${inP.name}换下${outP.name}`, `${outP.name}不用硬撑，${inP.name}带着体力上来补这一段`);
+    markCoachEffect("sub", `${inP.name}换下${outP.name}`, `${outP.name}不用硬撑，${inP.name}带着体力上来补这一段`, subTrace);
     assistantAfterSub(outId, inId);
   }
   return { inP, outP };
@@ -346,14 +390,17 @@ function rookieTurnoverMod(team) {
   if (team === S.myTeam) return rookieActions() > 0 ? -0.018 : 0.026;
   return rookieActions() > 0 ? 0.012 : -0.006;
 }
-function noteRookieSpark(label) {
+function noteRookieSpark(label, trace = null) {
   if (!rookieArcOn() || !S.coachStats || S.coachStats.actions > 4) return;
   S.rookieArc.spark = 5;
   S.boost[S.myTeam] += 12;
   addMomentum(S.myTeam, 5);
   if (!S.rookieArc.sparkNoted) {
     S.rookieArc.sparkNoted = true;
-    pushFeed("system", `场边这一声很快有了反应：${label}之后，场上五个人明显稳了一拍。`, { mini: true });
+    pushFeed("system", `场边这一声很快有了反应：${label}之后，场上五个人明显稳了一拍。`, {
+      mini: true,
+      trace: trace ? { ...trace, source: "rookie-spark" } : undefined,
+    });
   }
 }
 function updateRookieArc() {
@@ -637,6 +684,7 @@ function startGame() {
   S.subSel = null;
   S.subWindow = false;
   S.subBy = null;
+  S.subWindowSchemeBase = null;
   clearInterval(S.subTimer);
   S.subCountdown = 0;
   S.timeouts = { knicks: 7, spurs: 7 };
@@ -660,6 +708,7 @@ function startGame() {
   S.coachTaskResult = null;
   S.coachStats = makeCoachStats();
   S.coachTask = buildCoachTask();
+  S.coachHelpOpen = false;
   S.openingStarted = false;
   S.assistantMode = false;
   S.assistantStep = "";
@@ -678,6 +727,7 @@ function startGame() {
     spurs:  { off: TEAM_TACTICS.spurs.defaultOff,  def: TEAM_TACTICS.spurs.defaultDef },
   };
   initStats();
+  resetTacticalState();
   S.possessionTeam = (S.gameNo % 2 === 1) ? "spurs" : "knicks";   // 奇数场圣安东尼奥主场先球
   $("feed").innerHTML = "";
   $("decision-bar").classList.add("hidden");
@@ -711,13 +761,16 @@ function scheduleNext(ms) {
 
 /* 开启「换人/调整」窗口：暂停模拟、解锁换人、切到指挥台
    seconds = 布置倒计时（真实秒）；by = 谁叫的暂停（null=节间休息） */
-function openSubWindow(msg, btnText, seconds, by) {
+function openSubWindow(msg, btnText, seconds, by, opt = {}) {
   S.running = false;
   S.subWindow = true;
   S.subBy = by || null;
+  S.subWindowSchemeBase = S.myTeam && S.scheme[S.myTeam]
+    ? { off: S.scheme[S.myTeam].off, def: S.scheme[S.myTeam].def }
+    : null;
   S.resumeLabel = btnText || "▶ 继续比赛";
   clearTimeout(S.timer);
-  if (msg) pushFeed("system", msg);
+  if (msg) pushFeed("system", msg, opt);
   richFeed(by ? "timeout" : "quarterBreak", "system", {}, 1);
   setView("cmd");          // 自动切到指挥台，方便立刻调整
   startSubCountdown(seconds || 20);
@@ -728,8 +781,10 @@ function openSubWindow(msg, btnText, seconds, by) {
 function closeSubWindow() {
   clearInterval(S.subTimer);
   S.subCountdown = 0;
+  commitSubWindowSchemePlan();
   S.subWindow = false;
   S.subBy = null;
+  S.subWindowSchemeBase = null;
   S.subSel = null;
   S.running = true;
   $("btn-pause").textContent = "⏸ 叫暂停";
@@ -771,6 +826,17 @@ function updatePauseCountdown() {
   time.textContent = left;
   time.classList.toggle("danger", left <= 5);
   if (label) label.textContent = S.subBy ? "暂停布置倒计时" : "节间/加时布置倒计时";
+}
+
+function commitSubWindowSchemePlan() {
+  if (!S.myTeam || !S.subWindowSchemeBase || !S.scheme[S.myTeam]) return;
+  const base = S.subWindowSchemeBase;
+  const current = S.scheme[S.myTeam];
+  ["off", "def"].forEach((kind) => {
+    if (base[kind] && current[kind] && base[kind] !== current[kind]) {
+      commitMySchemeChange(kind, current[kind], base[kind], "setup-window");
+    }
+  });
 }
 
 function capTimeouts(max, reason) {
@@ -831,11 +897,28 @@ function requestPlayerTimeout(fromCrisis = false) {
   homeCrowdText("timeout", {}, 0.65);
   liftHeat(S.myTeam, 8);
   S.run = { team: null, pts: 0 };
-  noteCoachAction("暂停布置");
+  const tacticalAction = createCoachAction("timeout", {
+    team: S.myTeam,
+    fromCrisis,
+    reason: S.coachPrompt?.type || "manual",
+  });
+  const adjustment = createAdjustmentWindow(tacticalAction, {
+    type: "timeout",
+    label: "暂停重新布置",
+    targetProblem: fromCrisis ? "crisis" : "stabilize",
+    expectedCauseIds: ["cause.coach.adjustment_success", "cause.defense.stable", "cause.lineup.fit"],
+  });
+  const trace = {
+    coachActionId: tacticalAction.coachActionId,
+    adjustmentId: adjustment.adjustmentId,
+    causeIds: ["cause.coach.adjustment_success"],
+    source: "timeout",
+  };
+  noteCoachAction("暂停布置", trace);
   if (fromCrisis && S.coachStats) S.coachStats.crisisTimeouts++;
-  markCoachEffect("timeout", "叫暂停重新布置", "打断对手一波流，给体力和情绪一个回稳窗口");
+  markCoachEffect("timeout", "叫暂停重新布置", "打断对手一波流，给体力和情绪一个回稳窗口", trace);
   autoRotate(S.oppTeam, true, "暂停批量轮换");
-  openSubWindow(`📣 ${ROSTERS[S.myTeam].name} 请求暂停！士气回稳，可调整战术与阵容（${20}秒布置时间）。`, "▶ 继续比赛", 20, S.myTeam);
+  openSubWindow(`📣 ${ROSTERS[S.myTeam].name} 请求暂停！士气回稳，可调整战术与阵容（${20}秒布置时间）。`, "▶ 继续比赛", 20, S.myTeam, { trace });
   assistantAfterTimeout();
   return true;
 }
@@ -879,6 +962,32 @@ function maybeOppTimeout() {
   return true;
 }
 
+function processOpponentAdaptation() {
+  const adaptation = updateOpponentAdaptation();
+  if (!adaptation) return false;
+  const trace = {
+    adaptationId: adaptation.adaptationId,
+    causeIds: ["cause.opponent.adaptation"],
+    source: `opponent-adaptation-${adaptation.type}`,
+  };
+
+  if (adaptation.type === "prewarn") {
+    const liveTrace = pushFeed("system", adaptation.prewarn, { mini: true, trace });
+    noteOpponentAdaptationLivecast(liveTrace?.livecastId);
+    return true;
+  }
+
+  if (adaptation.type === "apply") {
+    if (adaptation.targetOff) S.scheme[S.oppTeam].off = adaptation.targetOff;
+    if (adaptation.targetDef) S.scheme[S.oppTeam].def = adaptation.targetDef;
+    pushFeed("system", adaptation.applyText, { mini: true, trace });
+    if (S.view === "cmd") renderCmd();
+    return true;
+  }
+
+  return false;
+}
+
 // ----------------- 主循环：生成一个回合 -----------------
 function tick() {
   if (!S.running || S.decisionPending || S.gameOver) return;
@@ -910,6 +1019,7 @@ function advanceAfterPossession(clutch) {
   updateRookieArc();
   maybeAutoRotationWindow();
   if (!clutch) updateCoachTargeting();
+  if (!clutch) processOpponentAdaptation();
   resolvePendingCoachEffect();
   updateScoreboard();
 
@@ -961,6 +1071,8 @@ function runPossession() {
   // 选进攻球员（iso 偏向核心）
   const shooter = pickShooter(offP, oSch);
   const isStar = !!shooter.star;
+  const tacticalContext = createPossessionContext({ off, def, shooter });
+  const tacticalTrace = (source, extra = {}) => traceForContext(tacticalContext, { source, ...extra });
 
   // 失误率：组织力↑↓、对手防守压力(中心化)、紧逼、提速、传导
   let toRate = 0.12 - (shooter.pg - 50) * 0.001 + (defPressure(def) - 72) * 0.0015;
@@ -985,12 +1097,22 @@ function runPossession() {
       const stealer = pickByWeight(defP, (p) => (styleOf(p).stl || 1) * (p.def + 20) * staminaFactor(p));
       stealer.st.stl++;
       bumpHeat(stealer, 12);
-      pushFeed(off, fill(rand(TEMPLATES.steal), { S: stealer.name, P: shooter.name }), { team: off });
+      pushFeed(off, fill(rand(TEMPLATES.steal), { S: stealer.name, P: shooter.name }), {
+        team: off,
+        trace: tacticalTrace("turnover-steal"),
+      });
       maybeRichFeed("deadball", def, scoreContext(def), 0.18);
       addMomentum(def, 6);
     } else {
-      pushFeed(off, fill(rand(TEMPLATES.turnover), { P: shooter.name }), { team: off });
+      pushFeed(off, fill(rand(TEMPLATES.turnover), { P: shooter.name }), {
+        team: off,
+        trace: tacticalTrace("turnover"),
+      });
     }
+    emitTacticalFeedback(finalizePossessionContext(tacticalContext, {
+      turnover: true,
+      shooterId: shooter.id,
+    }));
     switchPossession();
     return;
   }
@@ -1012,9 +1134,18 @@ function runPossession() {
     blocker.st.blk++;
     shooter.st.fga++;
     bumpHeat(blocker, 13); bumpHeat(shooter, -11);
-    pushFeed(off, fill(rand(TEMPLATES.block), { D: blocker.name, P: shooter.name }), { team: off });
+    pushFeed(off, fill(rand(TEMPLATES.block), { D: blocker.name, P: shooter.name }), {
+      team: off,
+      trace: tacticalTrace("block"),
+    });
     addMomentum(def, 7);
     rebound(def, off);
+    emitTacticalFeedback(finalizePossessionContext(tacticalContext, {
+      block: true,
+      miss: true,
+      isRim,
+      shooterId: shooter.id,
+    }));
     return;
   }
 
@@ -1050,9 +1181,19 @@ function runPossession() {
   if (drawFoul && !made) {
     const fouler = pickByWeight(defP, (p) => p.def * 0.5 + 50);
     fouler.st.pf++; S.fouls[def]++;
-    pushFeed(off, `${shooter.name} 出手时被 ${fouler.name} 犯规，获得罚球！`, { team: off });
+    pushFeed(off, `${shooter.name} 出手时被 ${fouler.name} 犯规，获得罚球！`, {
+      team: off,
+      trace: tacticalTrace("shooting-foul"),
+    });
     handleQuestionableCall(off, def, shooter, fouler, wEdge);
-    shootFTs(off, shooter, isThree ? 3 : 2);
+    const madeFTs = shootFTs(off, shooter, isThree ? 3 : 2);
+    emitTacticalFeedback(finalizePossessionContext(tacticalContext, {
+      foul: true,
+      points: madeFTs,
+      isThree,
+      isRim,
+      shooterId: shooter.id,
+    }));
     switchPossession();
     return;
   }
@@ -1075,29 +1216,65 @@ function runPossession() {
     addMomentum(off, isThree ? 5 : 3.5);
     bumpHeat(shooter, isThree ? 16 : (isRim ? 12 : 10));   // 进球点燃个人手感，但不再快速滚雪球
     if (assister) bumpHeat(assister, 9);
-    pushFeed(off, scoringText(shooter, isThree, isRim, assister), { team: off, score: true, big: isThree || isRim, pts });
+    pushFeed(off, scoringText(shooter, isThree, isRim, assister), {
+      team: off,
+      score: true,
+      big: isThree || isRim,
+      pts,
+      trace: tacticalTrace("made-shot", { points: pts }),
+    });
     maybeRichFeed("afterScore", off, scoreContext(off), 0.38, { mini: !isThree && !isRim });
     if (S.run.team === off && S.run.pts >= 8) maybeRichFeed("run", off, scoreContext(off), 0.55, { big: true });
 
+    let bonusFTs = 0;
     if (drawFoul) {
       const fouler = pickByWeight(defP, (p) => p.def * 0.5 + 50);
       fouler.st.pf++; S.fouls[def]++;
-      pushFeed(off, `打成 2+1！${shooter.name} 走上罚球线。`, { team: off });
+      pushFeed(off, `打成 2+1！${shooter.name} 走上罚球线。`, {
+        team: off,
+        trace: tacticalTrace("and-one"),
+      });
       richFeed("whistle", off, scoreContext(off), 1);
       handleQuestionableCall(off, def, shooter, fouler, wEdge);
       maybeRichFeed("review", "system", scoreContext(off), 0.08);
-      shootFTs(off, shooter, 1);
+      bonusFTs = shootFTs(off, shooter, 1);
     }
+    emitTacticalFeedback(finalizePossessionContext(tacticalContext, {
+      made: true,
+      points: pts + bonusFTs,
+      isThree,
+      isRim,
+      shooterId: shooter.id,
+    }));
     switchPossession();
   } else {
     const tplKey = isThree ? "miss_three" : (isRim ? "miss_layup" : "miss_mid");
     bumpHeat(shooter, isThree ? -11 : -9);             // 打铁影响手感
-    pushFeed(off, fill(rand(TEMPLATES[tplKey]), { P: shooter.name }), { team: off });
+    pushFeed(off, fill(rand(TEMPLATES[tplKey]), { P: shooter.name }), {
+      team: off,
+      trace: tacticalTrace("missed-shot"),
+    });
     if (off === S.homeTeam) nudgeCrowd(off, -1.8, "homeMiss", 0.20);
     maybeNoCall(off, def, shooter, isRim, isThree);
     maybeRichFeed("afterMiss", off, scoreContext(off), 0.34);
     rebound(def, off);
+    emitTacticalFeedback(finalizePossessionContext(tacticalContext, {
+      miss: true,
+      isThree,
+      isRim,
+      shooterId: shooter.id,
+    }));
   }
+}
+
+function emitTacticalFeedback(items) {
+  (items || []).forEach((item) => {
+    pushFeed(S.myTeam || "system", item.text, {
+      mini: true,
+      coachResult: true,
+      trace: item.trace,
+    });
+  });
 }
 
 function shootFTs(team, shooter, n) {
@@ -1310,7 +1487,7 @@ function coachTargetPenalty(kind) {
   if (!S.targetLevel) return 0;
   return kind === "tov" ? S.targetLevel * 0.005 : S.targetLevel * 0.007;
 }
-function noteCoachAction(label) {
+function noteCoachAction(label, trace = null) {
   if (!S.myTeam) return;
   if (S.coachStats) {
     S.coachStats.actions++;
@@ -1326,9 +1503,13 @@ function noteCoachAction(label) {
   S.boost[S.myTeam] += wasTargeted ? 10 : 5;
   addMomentum(S.myTeam, wasTargeted ? 5 : 2);
   if (wasTargeted) {
-    pushFeed(S.myTeam, `📋 ${label}奏效：及时变招打乱了对手预判，被针对状态解除。`, { team: S.myTeam, mini: true });
+    pushFeed(S.myTeam, `📋 ${label}奏效：及时变招打乱了对手预判，被针对状态解除。`, {
+      team: S.myTeam,
+      mini: true,
+      trace: trace ? { ...trace, source: "targeting-cleared" } : undefined,
+    });
   }
-  noteRookieSpark(label);
+  noteRookieSpark(label, trace);
 }
 
 // 个人气势：±调整、每回合衰减、暂停回暖
@@ -1358,12 +1539,21 @@ function heatTag(p) {
 function pushFeed(team, text, opt = {}) {
   const feed = $("feed");
   const row = document.createElement("div");
+  const trace = registerLivecastTrace(team, text, opt);
   row.className = "feed-row";
   row.setAttribute("data-testid", "feed-row");
   row.dataset.aiTeam = team;
   row.dataset.aiQuarter = String(S.quarter);
   row.dataset.aiClock = fmtClock(S.clock);
   row.dataset.aiScore = `${S.score.knicks}-${S.score.spurs}`;
+  row.dataset.aiLivecastId = trace.livecastId;
+  if (trace.possessionId) row.dataset.aiPossessionId = trace.possessionId;
+  if (trace.contextId) row.dataset.aiContextId = trace.contextId;
+  if (trace.causeIds && trace.causeIds.length) row.dataset.aiCauseIds = trace.causeIds.join(" ");
+  if (trace.coachActionId) row.dataset.aiCoachActionId = trace.coachActionId;
+  if (trace.adjustmentId) row.dataset.aiAdjustmentId = trace.adjustmentId;
+  if (trace.adaptationId) row.dataset.aiAdaptationId = trace.adaptationId;
+  if (trace.source) row.dataset.aiTraceSource = trace.source;
   if (opt.score) row.classList.add(team === S.myTeam ? "score-mine" : "score-opp");
   if (opt.big) row.classList.add("big-play");
   if (opt.mini) row.classList.add("mini");
@@ -1385,6 +1575,7 @@ function pushFeed(team, text, opt = {}) {
   feed.scrollTop = feed.scrollHeight;
   while (feed.children.length > 60) feed.removeChild(feed.firstChild);
   syncAiVerification("feed:push");
+  return trace;
 }
 
 function fmtClock(sec) {
@@ -1526,6 +1717,7 @@ function renderCoachUx() {
 
 function openCoachPrompt() {
   const focus = S.coachPrompt ? S.coachPrompt.focus : "coach-advice";
+  if (focus === "coach-advice" || focus === "sub-advice") S.coachHelpOpen = true;
   if (S.coachStats) S.coachStats.promptOpens++;
   setView("cmd");
   setTimeout(() => focusCoachArea(focus), 30);
@@ -1779,21 +1971,49 @@ function resolveCrisisDecision(key) {
     return;
   }
   if (key === "shout") {
+    const tacticalAction = createCoachAction("crisis_choice", { key: "shout", label: "场边喊话" });
+    const adjustment = createAdjustmentWindow(tacticalAction, {
+      type: "crisis_choice",
+      label: "场边喊话稳住",
+      targetProblem: "crisis",
+      expectedCauseIds: ["cause.coach.adjustment_success", "cause.defense.stable"],
+      remainingPossessions: 3,
+    });
+    const trace = {
+      coachActionId: tacticalAction.coachActionId,
+      adjustmentId: adjustment.adjustmentId,
+      causeIds: ["cause.coach.adjustment_success"],
+      source: "crisis-choice",
+    };
     if (S.coachStats) S.coachStats.crisisShouts++;
     addMomentum(S.myTeam, 3);
     liftHeat(S.myTeam, 3);
     if (S.run.team === S.oppTeam) S.run.pts = Math.max(0, Math.floor(S.run.pts * 0.55));
-    pushFeed(S.myTeam, `🗣️ 主教练在场边连续喊话，示意稳住第一传。`, { team: S.myTeam, big: true });
-    markCoachEffect("crisis", "场边喊话稳住", "不花暂停，先把情绪压回来，但阵容还得继续扛" );
+    pushFeed(S.myTeam, `🗣️ 主教练在场边连续喊话，示意稳住第一传。`, { team: S.myTeam, big: true, trace });
+    markCoachEffect("crisis", "场边喊话稳住", "不花暂停，先把情绪压回来，但阵容还得继续扛", trace);
     closeCrisisDecision();
     S.running = true;
     scheduleNext(700);
     return;
   }
   if (S.coachStats) S.coachStats.crisisGambles++;
-  S.crisisGamble = { atTick: S.tickCount, myScore: S.score[S.myTeam], oppScore: S.score[S.oppTeam] };
-  pushFeed(S.myTeam, `🧊 你没有叫停，选择相信场上五人自己打回来。`, { team: S.myTeam, big: true });
-  markCoachEffect("crisis", "硬扛相信球员", "下一波打成会很提气，继续丢分会更伤" );
+  const tacticalAction = createCoachAction("crisis_choice", { key: "hold", label: "硬扛相信球员" });
+  const adjustment = createAdjustmentWindow(tacticalAction, {
+    type: "crisis_choice",
+    label: "硬扛相信球员",
+    targetProblem: "crisis",
+    expectedCauseIds: ["cause.coach.adjustment_success", "cause.lineup.fit"],
+    remainingPossessions: 3,
+  });
+  const trace = {
+    coachActionId: tacticalAction.coachActionId,
+    adjustmentId: adjustment.adjustmentId,
+    causeIds: ["cause.coach.adjustment_success"],
+    source: "crisis-choice",
+  };
+  S.crisisGamble = { atTick: S.tickCount, myScore: S.score[S.myTeam], oppScore: S.score[S.oppTeam], trace };
+  pushFeed(S.myTeam, `🧊 你没有叫停，选择相信场上五人自己打回来。`, { team: S.myTeam, big: true, trace });
+  markCoachEffect("crisis", "硬扛相信球员", "下一波打成会很提气，继续丢分会更伤", trace);
   closeCrisisDecision();
   S.running = true;
   scheduleNext(700);
@@ -1808,20 +2028,31 @@ function resolveCrisisGamble() {
     if (S.coachStats) S.coachStats.crisisGambleWins++;
     addMomentum(S.myTeam, 8);
     liftHeat(S.myTeam, 7);
-    pushFeed(S.myTeam, "✅ 你选择硬扛，场上球员把回应打出来了，替补席重新站起来。", { team: S.myTeam, mini: true, coachResult: true });
+    pushFeed(S.myTeam, "✅ 你选择硬扛，场上球员把回应打出来了，替补席重新站起来。", {
+      team: S.myTeam,
+      mini: true,
+      coachResult: true,
+      trace: g.trace ? { ...g.trace, source: "crisis-result" } : undefined,
+    });
   } else {
     addMomentum(S.oppTeam, 6);
     S.targetLevel = Math.min(8, S.targetLevel + 1);
     frustrateTeam(S.myTeam, 4);
-    pushFeed(S.myTeam, "⚠️ 硬扛没有撑住，场上压力继续扩大，下一次要更果断。", { team: S.myTeam, mini: true, coachResult: true });
+    pushFeed(S.myTeam, "⚠️ 硬扛没有撑住，场上压力继续扩大，下一次要更果断。", {
+      team: S.myTeam,
+      mini: true,
+      coachResult: true,
+      trace: g.trace ? { ...g.trace, source: "crisis-result" } : undefined,
+    });
   }
   S.crisisGamble = null;
 }
 
-function markCoachEffect(type, title, impact) {
+function markCoachEffect(type, title, impact, trace = null) {
   if (!S.myTeam || S.gameOver) return;
   S.pendingCoachEffect = {
     type, title, impact,
+    trace,
     atTick: S.tickCount,
     myScore: S.score[S.myTeam],
     oppScore: S.score[S.oppTeam],
@@ -1829,7 +2060,11 @@ function markCoachEffect(type, title, impact) {
   };
   if (S.coachStats) S.coachStats.effects++;
   clearCoachPrompt();
-  pushFeed(S.myTeam, `📋 教练调整：${title} → ${impact}`, { team: S.myTeam, coach: true });
+  pushFeed(S.myTeam, `📋 教练调整：${title} → ${impact}`, {
+    team: S.myTeam,
+    coach: true,
+    trace: trace ? { ...trace, source: "coach-effect" } : undefined,
+  });
 }
 
 function resolvePendingCoachEffect() {
@@ -1845,7 +2080,12 @@ function resolvePendingCoachEffect() {
   else if (e.type === "sub") { result = "轮换价值已经显现：体力风险被提前拆掉，不用硬撑到崩。"; positive = true; }
   else if (e.type === "timeout") { result = "暂停价值已经显现：情绪和声浪被压住，比赛重新回到可指挥状态。"; positive = true; }
   if (positive && S.coachStats) S.coachStats.positiveEffects++;
-  pushFeed(S.myTeam, `✅ ${result}`, { team: S.myTeam, mini: true, coachResult: true });
+  pushFeed(S.myTeam, `✅ ${result}`, {
+    team: S.myTeam,
+    mini: true,
+    coachResult: true,
+    trace: e.trace ? { ...e.trace, source: "coach-effect-result" } : undefined,
+  });
   S.pendingCoachEffect = null;
 }
 
@@ -1985,12 +2225,15 @@ function renderCmd() {
   if (!S.myTeam) return;
   const opp = S.oppTeam, my = S.myTeam;
   const oOff = S.scheme[opp].off, oDef = S.scheme[opp].def;
+  const showHints = shouldShowCoachHints();
 
   renderMorale();   // 双方球队气势 + 个人手感速览
 
   // 情报区
   const recDef = bestCounterDef(oOff), recOff = bestCounterOff(oDef);
+  renderCoachHelpToggle(showHints);
   renderCoachAdvice(recOff, recDef, oOff, oDef);
+  renderCoachReadPanel();
   $("intel-box").innerHTML =
     `<div class="intel-row"><span class="il-lbl">对手</span>` +
       `<b>${OFF_SCHEMES[oOff].icon}${OFF_SCHEMES[oOff].name}</b>` +
@@ -1999,25 +2242,48 @@ function renderCmd() {
   // 我方进攻战术按钮
   const offBox = $("my-off");
   offBox.innerHTML = "";
-  Object.keys(OFF_SCHEMES).forEach((k) => offBox.appendChild(schemeBtn(k, OFF_SCHEMES[k], "off", recOff)));
+  Object.keys(OFF_SCHEMES).forEach((k) => offBox.appendChild(schemeBtn(k, OFF_SCHEMES[k], "off", recOff, showHints)));
   // 我方防守战术按钮
   const defBox = $("my-def");
   defBox.innerHTML = "";
-  Object.keys(DEF_SCHEMES).forEach((k) => defBox.appendChild(schemeBtn(k, DEF_SCHEMES[k], "def", recDef)));
+  Object.keys(DEF_SCHEMES).forEach((k) => defBox.appendChild(schemeBtn(k, DEF_SCHEMES[k], "def", recDef, showHints)));
 
   renderSubs();
 }
 
-function schemeBtn(key, info, kind, recKey) {
+function shouldShowCoachHints() {
+  return !!(S.assistantMode || S.coachHelpOpen);
+}
+
+function renderCoachHelpToggle(showHints = shouldShowCoachHints()) {
+  const btn = $("coach-help-toggle"), status = $("coach-help-status");
+  if (!btn) return;
+  btn.classList.toggle("active", showHints);
+  btn.disabled = !!S.assistantMode;
+  btn.setAttribute("aria-pressed", String(showHints));
+  btn.dataset.aiCoachHelpOpen = String(showHints);
+  btn.textContent = S.assistantMode ? "助教模式提示中" : (showHints ? "关闭助教提示" : "助教提示");
+  if (status) {
+    status.textContent = S.subWindow
+      ? "布置中可反复试战术，继续时只结算最终方案"
+      : S.assistantMode
+      ? "新手引导会保留推荐提示"
+      : (showHints ? "已显示战术/轮换建议" : "推荐默认隐藏，自己判断战术");
+  }
+}
+
+function schemeBtn(key, info, kind, recKey, showRecommendation) {
   const b = document.createElement("button");
   const active = S.scheme[S.myTeam][kind] === key;
   const required = S.assistantMode && S.assistantStep === ASSISTANT_STEPS.SCHEME && S.assistantTarget && S.assistantTarget.kind === kind && S.assistantTarget.key === key;
+  const recommendedVisible = !!showRecommendation && key === recKey;
   b.id = `coach-scheme-${kind}-${key}`;
   b.setAttribute("data-testid", `scheme-${kind}-${key}`);
   b.dataset.aiSchemeKind = kind;
   b.dataset.aiSchemeKey = key;
   b.dataset.aiRecommended = String(key === recKey);
-  b.className = "sch-btn" + (active ? " active" : "") + (key === recKey ? " rec" : "") + (required ? " tutorial-required coach-target-live" : "");
+  b.dataset.aiRecommendationVisible = String(recommendedVisible);
+  b.className = "sch-btn" + (active ? " active" : "") + (recommendedVisible ? " rec" : "") + (required ? " tutorial-required coach-target-live" : "");
   b.innerHTML = `<span class="sch-name">${info.icon} ${info.name}</span>` +
                 `<span class="sch-desc">${schemeShort(kind, key)}</span>`;
   b.onclick = () => {
@@ -2063,6 +2329,8 @@ function reasonDef(key, oppOff) {
   return map[key] || DEF_SCHEMES[key].desc;
 }
 function getSubSuggestion(team, recOff) {
+  const tactical = tacticalSubSuggestion(team, recOff);
+  if (tactical) return tactical;
   const court = onCourtArr(team).slice();
   const bench = benchArr(team).slice();
   const tired = court.sort((a, b) => (a.stamina + (a.heat || 0) * 0.15) - (b.stamina + (b.heat || 0) * 0.15))[0];
@@ -2081,6 +2349,12 @@ function getSubSuggestion(team, recOff) {
 function renderCoachAdvice(recOff, recDef, oppOff, oppDef) {
   const box = $("coach-advice");
   if (!box) return;
+  if (!shouldShowCoachHints()) {
+    box.classList.add("hidden");
+    box.innerHTML = "";
+    return;
+  }
+  box.classList.remove("hidden");
   const sub = getSubSuggestion(S.myTeam, recOff);
   const homeTip = S.myTeam === S.homeTeam
     ? `${HOME_COURT_PROFILE[S.homeTeam].shortArena}声浪${crowdLevel()}，顺风会放大一波流，但连续打铁也会焦躁。`
@@ -2095,26 +2369,93 @@ function renderCoachAdvice(recOff, recDef, oppOff, oppDef) {
     `</div>`;
 }
 
+function renderCoachReadPanel() {
+  const panel = $("coach-read-panel");
+  if (!panel) return;
+  if (!shouldShowCoachHints()) {
+    panel.classList.add("hidden");
+    return;
+  }
+  const model = renderCoachReadModel(S.myTeam);
+  if (!model) {
+    panel.classList.add("hidden");
+    return;
+  }
+  panel.classList.remove("hidden");
+  panel.dataset.aiSchemeFit = model.schemeFit || "";
+  panel.dataset.aiSpacing = String(model.lineupFit?.spacing ?? "");
+  panel.dataset.aiHandler = String(model.lineupFit?.handler ?? "");
+  panel.dataset.aiRimProtect = String(model.lineupFit?.rimProtect ?? "");
+  panel.dataset.aiLastPossessionId = S.tactical?.lastContext?.possessionId || "";
+  writeCoachReadRow("coach-read-situation", "局势", model.situation);
+  writeCoachReadRow("coach-read-scheme-fit", "战术", model.scheme);
+  writeCoachReadRow("coach-read-lineup-fit", "阵容", model.lineup);
+  writeCoachReadRow("coach-read-risk", "风险", model.risk);
+  writeCoachReadRow("coach-read-suggestion", "建议", model.suggestion);
+}
+
+function writeCoachReadRow(id, label, value) {
+  const el = $(id);
+  if (!el) return;
+  el.innerHTML = `<span>${label}</span><b>${value}</b>`;
+}
+
 function setMyScheme(kind, key) {
   if (S.scheme[S.myTeam][kind] === key) return;
+  const prev = S.scheme[S.myTeam][kind];
+  if (S.subWindow) {
+    S.scheme[S.myTeam][kind] = key;
+    refreshLineupProfiles("setup-scheme-draft");
+    renderCmd();
+    assistantAfterScheme(kind, key);
+    syncAiVerification(`scheme-draft:${kind}:${key}`);
+    return;
+  }
+  commitMySchemeChange(kind, key, prev, "scheme-change");
+}
+
+function commitMySchemeChange(kind, key, prev, source = "scheme-change") {
+  if (!S.myTeam || !S.scheme[S.myTeam] || prev === key) return;
+  const tacticalAction = createCoachAction("scheme_change", {
+    team: S.myTeam,
+    kind,
+    from: prev,
+    to: key,
+  });
   S.scheme[S.myTeam][kind] = key;
   const info = kind === "off" ? OFF_SCHEMES[key] : DEF_SCHEMES[key];
+  refreshLineupProfiles("coach-scheme-change");
+  const adjustment = createAdjustmentWindow(tacticalAction, {
+    type: "scheme_change",
+    label: `${kind === "off" ? "进攻" : "防守"}切到${info.name}`,
+    targetProblem: kind === "off" ? "attack_counter" : "defense_counter",
+    expectedCauseIds: kind === "off"
+      ? ["cause.scheme.counter", "cause.lineup.fit"]
+      : ["cause.defense.stable", "cause.scheme.blocked"],
+  });
+  const trace = {
+    coachActionId: tacticalAction.coachActionId,
+    adjustmentId: adjustment.adjustmentId,
+    causeIds: kind === "off" ? ["cause.scheme.counter"] : ["cause.defense.stable"],
+    source,
+  };
   const tpl = kind === "off" ? SCHEME_FLAVOR.myOff : SCHEME_FLAVOR.myDef;
-  pushFeed(S.myTeam, fill(tpl, { N: info.name, D: info.desc }), { team: S.myTeam });
-  noteCoachAction(kind === "off" ? "进攻战术调整" : "防守战术调整");
+  pushFeed(S.myTeam, fill(tpl, { N: info.name, D: info.desc }), { team: S.myTeam, trace });
+  noteCoachAction(kind === "off" ? "进攻战术调整" : "防守战术调整", trace);
   markCoachEffect(
     kind === "off" ? "scheme-off" : "scheme-def",
     `${kind === "off" ? "进攻" : "防守"}切到【${info.name}】`,
-    kind === "off" ? reasonOff(key, S.scheme[S.oppTeam].def) : reasonDef(key, S.scheme[S.oppTeam].off)
+    kind === "off" ? reasonOff(key, S.scheme[S.oppTeam].def) : reasonDef(key, S.scheme[S.oppTeam].off),
+    trace
   );
   // 即时提示是否克制对手
   if (kind === "def") {
     const m = (MATCHUP[S.scheme[S.oppTeam].off] && MATCHUP[S.scheme[S.oppTeam].off][key]) || 0;
-    if (m < -0.03) pushFeed(S.myTeam, SCHEME_FLAVOR.counterGood, { team: S.myTeam, mini: true });
+    if (m < -0.03) pushFeed(S.myTeam, SCHEME_FLAVOR.counterGood, { team: S.myTeam, mini: true, trace });
   } else {
     const m = (MATCHUP[key] && MATCHUP[key][S.scheme[S.oppTeam].def]) || 0;
-    if (m > 0.04) pushFeed(S.myTeam, SCHEME_FLAVOR.counterGood, { team: S.myTeam, mini: true });
-    else if (m < -0.04) pushFeed(S.myTeam, SCHEME_FLAVOR.counterBad, { team: S.myTeam, mini: true });
+    if (m > 0.04) pushFeed(S.myTeam, SCHEME_FLAVOR.counterGood, { team: S.myTeam, mini: true, trace });
+    else if (m < -0.04) pushFeed(S.myTeam, SCHEME_FLAVOR.counterBad, { team: S.myTeam, mini: true, trace });
   }
   renderCmd();
   assistantAfterScheme(kind, key);
@@ -2157,7 +2498,13 @@ function renderSubs() {
   onCourtArr(my).forEach((p) => court.appendChild(playerChip(p, true)));
   benchArr(my).forEach((p) => bench.appendChild(playerChip(p, false)));
   const adviceEl = $("sub-advice");
-  if (adviceEl) adviceEl.innerHTML = `💡 ${getSubSuggestion(my, bestCounterOff(S.scheme[S.oppTeam].def))}`;
+  if (adviceEl) {
+    const showHints = shouldShowCoachHints();
+    adviceEl.classList.toggle("muted", !showHints);
+    adviceEl.innerHTML = showHints
+      ? `💡 ${getSubSuggestion(my, bestCounterOff(S.scheme[S.oppTeam].def))}`
+      : "助教提示关闭：暂停或节间时可自主安排轮换。";
+  }
   const hintEl = $("sub-hint");
   if (!S.subWindow) {
     hintEl.textContent = "🔒 比赛进行中不能换人 —— 叫暂停或等节间休息";
@@ -2342,10 +2689,30 @@ function askDecision() {
     b.className = "decision-opt";
     b.innerHTML = `<span class="do-label">${d.label}</span><span class="do-desc">${d.desc}</span>`;
     b.onclick = () => {
+      const cleanLabel = d.label.replace(/^[^\s]+\s*/, "");
+      const tacticalAction = createCoachAction("decision", {
+        key: d.key,
+        label: cleanLabel,
+      });
+      const adjustment = createAdjustmentWindow(tacticalAction, {
+        type: "decision",
+        label: `临场选择：${cleanLabel}`,
+        targetProblem: "late_game",
+        expectedCauseIds: ["cause.coach.adjustment_success", "cause.scheme.counter"],
+      });
+      const trace = {
+        coachActionId: tacticalAction.coachActionId,
+        adjustmentId: adjustment.adjustmentId,
+        causeIds: ["cause.coach.adjustment_success"],
+        source: "decision",
+      };
       const msg = d.apply();
-      pushFeed(S.myTeam, "📋 " + msg, { team: S.myTeam });
-      noteCoachAction("关键时刻布置");
-      markCoachEffect("decision", d.label.replace(/^[^\s]+\s*/, ""), "这一回合的执行权已经被你明确交代，结果会很快兑现");
+      pushFeed(S.myTeam, "📋 " + msg, {
+        team: S.myTeam,
+        trace,
+      });
+      noteCoachAction("关键时刻布置", trace);
+      markCoachEffect("decision", cleanLabel, "这一回合的执行权已经被你明确交代，结果会很快兑现", trace);
       bar.classList.add("hidden");
       S.decisionPending = false;
       if (S.running) scheduleNext(500);
@@ -2491,14 +2858,42 @@ function askClutchPlay() {
 }
 function resolveClutch(opt) {
   $("clutch-bar").classList.add("hidden");
-  noteCoachAction("关键战术选择");
   const p = opt.p, pack = opt.pack, def = S.oppTeam;
   const tier = S.clutchTier || 2;
+  const tacticalAction = createCoachAction("clutch_choice", {
+    pack,
+    playerId: p.id,
+    playerName: p.name,
+    tier,
+  });
+  const adjustment = createAdjustmentWindow(tacticalAction, {
+    type: "clutch_choice",
+    label: `关键球选择：${packLabel(pack)}`,
+    targetProblem: "clutch",
+    expectedCauseIds: ["cause.scheme.star_advantage", "cause.coach.adjustment_success"],
+    remainingPossessions: 2,
+  });
+  const tacticalContext = createPossessionContext({ off: S.myTeam, def, shooter: p });
+  addCause(tacticalContext, "cause.scheme.star_advantage");
+  if (pack === "team") addCause(tacticalContext, "cause.scheme.ball_movement");
+  if (pack === "gamble") addCause(tacticalContext, "cause.scheme.counter");
+  const tacticalTrace = (source, extra = {}) => traceForContext(tacticalContext, {
+    coachActionId: tacticalAction.coachActionId,
+    adjustmentId: adjustment.adjustmentId,
+    source,
+    ...extra,
+  });
   homeCrowdText("clutch", {}, 0.75);
   const preDiff = S.score[S.myTeam] - S.score[def];
   const defender = pickByWeight(onCourtArr(def), (d) => d.def + (styleOf(d).blk || 1) * 12 + (styleOf(d).stl || 1) * 10);
-  pushFeed(S.myTeam, `📋 关键回合选择【${packLabel(pack)}】，${p.name}是第一触发点。`, { team: S.myTeam, big: true });
-  markCoachEffect("clutch", `关键球选择【${packLabel(pack)}】`, `${p.name}成为第一触发点，成败会直接写进下一段直播`);
+  const clutchTrace = tacticalTrace("clutch-choice");
+  noteCoachAction("关键战术选择", clutchTrace);
+  pushFeed(S.myTeam, `📋 关键回合选择【${packLabel(pack)}】，${p.name}是第一触发点。`, {
+    team: S.myTeam,
+    big: true,
+    trace: clutchTrace,
+  });
+  markCoachEffect("clutch", `关键球选择【${packLabel(pack)}】`, `${p.name}成为第一触发点，成败会直接写进下一段直播`, clutchTrace);
 
   let outcome;
   if (rookieArcOn() && S.rookieArc.finalArmed && !S.rookieArc.finalUsed) {
@@ -2524,6 +2919,7 @@ function resolveClutch(opt) {
   }
 
   let overlayKind = "fail", overlayBig = "没 成！", overlaySub = "关键回合没有兑现", delay = 1200;
+  let tacticalOutcome = { clutch: true, choice: pack, shooterId: p.id };
   const teammate = clutchTeammate(p, outcome === "kickout" || outcome === "teamMake" || outcome === "gambleThree");
   const isThree = outcome === "kickout" || outcome === "teamMake" || outcome === "gambleThree" || outcome === "review";
 
@@ -2542,13 +2938,15 @@ function resolveClutch(opt) {
     overlayKind = "win"; overlayBig = leadTxt === "反超" ? "反 超！" : leadTxt === "绝平" ? "绝 平！" : "进 了！";
     overlaySub = `${scorer.name}关键${pts}分 · ${rand(CLUTCH_FLAVOR)}`;
     if (rookieArcOn() && S.rookieArc.finalUsed) overlaySub = `${scorer.name}把第一场写成你的决定`;
+    tacticalOutcome = { ...tacticalOutcome, made: true, points: pts, isThree, shooterId: scorer.id };
   } else if (outcome === "foul" || outcome === "foulGame") {
     pushFeed(S.myTeam, `🧨 ${p.name}强突制造身体接触，裁判响哨！${defender.name}犯规。`, { team: S.myTeam, big: true });
     defender.st.pf++; S.fouls[def]++;
     handleQuestionableCall(S.myTeam, def, p, defender, whistleEdge(S.myTeam, true));
-    shootFTs(S.myTeam, p, outcome === "foulGame" ? 2 : (Math.random() < 0.25 ? 3 : 2));
+    const madeFTs = shootFTs(S.myTeam, p, outcome === "foulGame" ? 2 : (Math.random() < 0.25 ? 3 : 2));
     setClutchAftershock(S.myTeam, 0.55, 3, "关键罚球");
     overlayKind = "win"; overlayBig = "上 线！"; overlaySub = `${p.name}用罚球决定命运`;
+    tacticalOutcome = { ...tacticalOutcome, foul: true, points: madeFTs, shooterId: p.id };
   } else if (outcome === "oreb" || outcome === "longRebound") {
     recordClutchShot(S.myTeam, p, pack === "gamble", false);
     const board = pickByWeight(onCourtArr(S.myTeam), (x) => x.reb + (x.id === p.id ? 8 : 0));
@@ -2559,12 +2957,14 @@ function resolveClutch(opt) {
     addMomentum(S.myTeam, 13); bumpHeat(board, 30);
     setClutchAftershock(S.myTeam, 1.0, 4, "二次进攻改命");
     overlayKind = "win"; overlayBig = "补 进！"; overlaySub = `${board.name}抢回命运`;
+    tacticalOutcome = { ...tacticalOutcome, miss: true, made: true, points: pts, offensiveRebound: true, shooterId: board.id };
   } else if (outcome === "noCall") {
     recordClutchShot(S.myTeam, p, false, false);
     pushFeed(S.myTeam, `😤 ${p.name}杀到篮下倒地，没有哨！全场瞬间炸锅。`, { team: S.myTeam, big: true });
     maybeNoCall(S.myTeam, def, p, true, false);
     setClutchAftershock(def, 0.65, 3, "漏哨情绪");
     overlaySub = `${p.name}倒地没哨，情绪开始影响比赛`;
+    tacticalOutcome = { ...tacticalOutcome, miss: true, isRim: true, shooterId: p.id };
   } else if (outcome === "blocked") {
     recordClutchShot(S.myTeam, p, false, false);
     defender.st.blk++;
@@ -2572,12 +2972,14 @@ function resolveClutch(opt) {
     addMomentum(def, 12); bumpHeat(defender, 26); bumpHeat(p, -20);
     setClutchAftershock(def, 1.0, 4, "关键封盖");
     overlayBig = "大 帽！"; overlaySub = `${defender.name}把这一球摁了下来`;
+    tacticalOutcome = { ...tacticalOutcome, block: true, miss: true, shooterId: p.id };
   } else if (outcome === "blownCoverage") {
     const runout = pickByWeight(onCourtArr(def), (x) => x.off + x.pg * 0.4);
     runout.st.fga++; runout.st.fgm++; runout.st.pts += 2; addScore(def, 2);
     pushFeed(S.myTeam, `⚠️ 赌博变化被识破，${defender.name}断球，${runout.name}反击直接打成！`, { team: S.myTeam, big: true });
     addMomentum(def, 12); setClutchAftershock(def, 0.9, 4, "赌博失败");
     overlayBig = "被 破！"; overlaySub = "高风险选择付出代价";
+    tacticalOutcome = { ...tacticalOutcome, turnover: true, pointsAgainst: 2, shooterId: p.id };
   } else {
     const isTO = outcome === "turnover" || outcome === "lateClock" || outcome === "stealRunout";
     if (isTO) { p.st.tov++; pushFeed(S.myTeam, `💥 ${packLabel(pack)}执行崩了，${p.name}${outcome === "lateClock" ? "压到最后仓促处理，24秒违例" : "被夹击逼出失误"}！`, { team: S.myTeam, big: true }); }
@@ -2585,9 +2987,11 @@ function resolveClutch(opt) {
     addMomentum(def, 9); bumpHeat(p, -18); frustrateTeam(S.myTeam, 5);
     setClutchAftershock(def, 0.75, 3, isTO ? "关键失误" : "关键打铁");
     overlaySub = isTO ? `${p.name}关键失误，压力来到下一回合` : `${p.name}没能把故事写完`;
+    tacticalOutcome = { ...tacticalOutcome, turnover: isTO, miss: !isTO, isThree: pack === "gamble", shooterId: p.id };
   }
 
   updateScoreboard();
+  emitTacticalFeedback(finalizePossessionContext(tacticalContext, tacticalOutcome));
   showClutchOverlay(overlayKind, overlayBig, overlaySub);
   S.decisionPending = false;
   switchPossession();

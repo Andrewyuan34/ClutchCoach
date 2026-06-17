@@ -32,8 +32,15 @@ There is no `index.html` app path anymore. Use `/live.html` as the product entry
 
 - Owns the AI-native verification contract.
 - Exposes deterministic seed support, DOM/JSON snapshots, built-in assertions, and test-id query helpers.
+- Includes a compact tactical trace snapshot so agents can connect coach actions, possessions, livecast rows, and adjustment outcomes.
 - Exports `AI_VERIFY_CONTRACT`, which is consumed by `tools/check-ai-contract.mjs` and should be updated whenever the stable verification surface changes.
 - Keep this module player-invisible: it should not add visible UI or change normal gameplay unless a seed URL parameter is provided.
+
+`src/tactical.mjs`
+
+- Owns the tactical cause layer for possessions, substitutions, scheme changes, timeout decisions, clutch choices, opponent adaptation, livecast tracing, and AI-debug events.
+- Produces stable ids for `coachActionId`, `adjustmentId`, `possessionId`, `contextId`, and `livecastId`.
+- Keep this module mostly pure state/analysis logic. DOM rendering should stay in `src/live-sim.mjs`; declarative balancing data should stay in `src/data/tactical-data.mjs`.
 
 `src/data/commentary-data.mjs`
 
@@ -44,6 +51,11 @@ There is no `index.html` app path anymore. Use `/live.html` as the product entry
 
 - Compact extract of prior play-by-play data plus atmosphere snippets.
 - This is large by design. If startup size becomes a problem, split this into JSON and lazy-load it after the first screen renders.
+
+`src/data/tactical-data.mjs`
+
+- Declarative player tactical traits, scheme fit requirements, cause templates, and opponent adaptation rules.
+- Update this when adding teams, players, schemes, or new traceable tactical causes.
 
 `src/styles/live.css`
 

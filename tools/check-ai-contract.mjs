@@ -19,10 +19,12 @@ function includesAll(text, values) {
   return values.filter((value) => !text.includes(value));
 }
 
-const [html, liveSim, aiVerify, readme, aiDocs] = await Promise.all([
+const [html, liveSim, aiVerify, tactical, tacticalData, readme, aiDocs] = await Promise.all([
   readFile(path.join(root, "live.html"), "utf8"),
   readFile(path.join(root, "src", "live-sim.mjs"), "utf8"),
   readFile(path.join(root, "src", "ai-verify.mjs"), "utf8"),
+  readFile(path.join(root, "src", "tactical.mjs"), "utf8"),
+  readFile(path.join(root, "src", "data", "tactical-data.mjs"), "utf8"),
   readFile(path.join(root, "README.md"), "utf8"),
   readFile(path.join(root, "docs", "ai-verification.md"), "utf8"),
 ]);
@@ -44,13 +46,24 @@ record("verify.contract_global", aiVerify.includes("getContract"), "Browser glob
 record("verify.seed_support", aiVerify.includes("ai_seed") && aiVerify.includes("Math.random = seeded"), "Deterministic seed support is wired.");
 record("verify.assertions", aiVerify.includes("getAssertions") && aiVerify.includes("getAssertSummary"), "Built-in assertions are exposed.");
 record("verify.json_sync", aiVerify.includes("textContent = JSON.stringify(snapshot)"), "Snapshot is written to JSON node.");
+record("verify.tactical_snapshot", aiVerify.includes("compactTacticalState") && aiVerify.includes("tactical,"), "Snapshot includes compact tactical state.");
 
 for (const fn of ["installAiDeterminism", "initAiVerification", "syncAiVerification"]) {
   record(`live.${fn}.used`, liveSim.includes(fn), `${fn} is used by live-sim.mjs.`);
 }
 
+for (const fn of ["createPossessionContext", "finalizePossessionContext", "registerLivecastTrace", "renderCoachReadModel"]) {
+  record(`tactical.${fn}.used`, liveSim.includes(fn), `${fn} is wired into live-sim.mjs.`);
+}
+
+record("tactical.module.present", tactical.includes("export function createPossessionContext") && tactical.includes("export function compactTacticalState"), "Tactical module exports context and compact snapshot helpers.");
+record("tactical.data.present", tacticalData.includes("TACTICAL_TRAITS") && tacticalData.includes("SCHEME_REQUIREMENTS"), "Tactical data has player traits and scheme requirements.");
+
 const generatedSignals = [
   'data-testid", "feed-row"',
+  "dataset.aiLivecastId",
+  "dataset.aiContextId",
+  "dataset.aiCauseIds",
   '`scheme-${kind}-${key}`',
   '"player-court"',
   '"player-bench"',

@@ -1,5 +1,6 @@
 import { ROSTERS } from "./data/commentary-data.mjs";
 import { S } from "./state.mjs";
+import { compactTacticalState } from "./tactical.mjs";
 
 export const AI_VERIFY_CONTRACT = Object.freeze({
   protocol: "nba-live-ai-verification",
@@ -24,6 +25,14 @@ export const AI_VERIFY_CONTRACT = Object.freeze({
     "tab-feed",
     "tab-command",
     "tab-box",
+    "command-panel",
+    "coach-help-toggle",
+    "coach-read-panel",
+    "coach-read-situation",
+    "coach-read-scheme-fit",
+    "coach-read-lineup-fit",
+    "coach-read-risk",
+    "coach-read-suggestion",
     "coach-intro-modal",
     "coach-intro-start",
     "coach-tutorial-modal",
@@ -106,6 +115,9 @@ function buildSnapshot() {
   const activeScreen = document.querySelector(".screen.active");
   const activeScreens = [...document.querySelectorAll(".screen.active")].map((el) => el.id);
   const feedRows = [...document.querySelectorAll("#feed .feed-row")];
+  const tracedFeedRows = feedRows.filter((el) => !!el.dataset.aiLivecastId);
+  const lastFeed = feedRows.length ? feedRows[feedRows.length - 1] : null;
+  const tactical = compactTacticalState();
   const visibleModals = [...document.querySelectorAll(".coach-modal")]
     .filter((el) => isVisible(el) && !el.classList.contains("hidden"))
     .map((el) => el.id);
@@ -152,18 +164,31 @@ function buildSnapshot() {
       task: S.coachTask ? { name: S.coachTask.name, desc: S.coachTask.desc } : null,
       prompt: S.coachPrompt ? { type: S.coachPrompt.type, text: S.coachPrompt.text, focus: S.coachPrompt.focus } : null,
       crisisPending: !!S.crisisPending,
+      helpOpen: !!(S.coachHelpOpen || S.assistantMode),
     },
     dom: {
       title: document.title,
       url: location.href,
       visibleModals,
       feedRows: feedRows.length,
-      lastFeedText: feedRows.length ? feedRows[feedRows.length - 1].innerText.trim() : "",
+      tracedFeedRows: tracedFeedRows.length,
+      lastFeedText: lastFeed ? lastFeed.innerText.trim() : "",
+      lastFeedTrace: lastFeed ? {
+        livecastId: lastFeed.dataset.aiLivecastId || "",
+        possessionId: lastFeed.dataset.aiPossessionId || "",
+        contextId: lastFeed.dataset.aiContextId || "",
+        causeIds: lastFeed.dataset.aiCauseIds || "",
+        coachActionId: lastFeed.dataset.aiCoachActionId || "",
+        adjustmentId: lastFeed.dataset.aiAdjustmentId || "",
+        adaptationId: lastFeed.dataset.aiAdaptationId || "",
+        source: lastFeed.dataset.aiTraceSource || "",
+      } : null,
       requiredTestIds: requiredTestIds().reduce((acc, id) => {
         acc[id] = !!document.querySelector(`[data-testid="${cssEscape(id)}"]`);
         return acc;
       }, {}),
     },
+    tactical,
     rosters: rosterSnapshot(),
     assertions: summarizeAssertions(buildAssertions()),
   };
@@ -176,7 +201,12 @@ function buildAssertions() {
   };
   const activeScreens = document.querySelectorAll(".screen.active").length;
   const missingTestIds = requiredTestIds().filter((id) => !document.querySelector(`[data-testid="${cssEscape(id)}"]`));
-  const feedRows = document.querySelectorAll("#feed .feed-row").length;
+  const feedRowEls = [...document.querySelectorAll("#feed .feed-row")];
+  const feedRows = feedRowEls.length;
+  const tracedFeedRows = feedRowEls.filter((el) => !!el.dataset.aiLivecastId).length;
+  const tactical = compactTacticalState();
+  const selectedTeam = S.myTeam;
+  const selectedProfile = selectedTeam ? tactical.lineupProfiles?.[selectedTeam] : null;
 
   return [
     {
@@ -198,6 +228,21 @@ function buildAssertions() {
       id: "feed.row_limit",
       pass: feedRows <= 60,
       details: `Feed rows: ${feedRows}.`,
+    },
+    {
+      id: "livecast.trace.dom_present",
+      pass: feedRows === 0 || tracedFeedRows === feedRows,
+      details: `Traced feed rows: ${tracedFeedRows}/${feedRows}.`,
+    },
+    {
+      id: "tactical.state.present",
+      pass: !!S.tactical,
+      details: "Tactical cause/trace state is initialized.",
+    },
+    {
+      id: "tactical.lineup_profiles.present",
+      pass: !selectedTeam || !!(selectedProfile && selectedProfile.playerIds && selectedProfile.playerIds.length),
+      details: selectedTeam ? `Selected ${selectedTeam} profile present: ${!!selectedProfile}.` : "No selected team yet.",
     },
     {
       id: "testids.required.present",
