@@ -273,10 +273,31 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
 .board-piece.offense{ color:#10151b; background:#ffcf6a; border:2px solid #fff1b8; }
 .board-piece.defense{ color:#eff5fb; background:#30475e; border:2px solid #8fb8ff; }
 .ball-dot{ position:absolute; right:-3px; bottom:-3px; width:10px; height:10px; border-radius:50%; background:#f58426; border:1px solid #fff; }
+.board-ball{ position:absolute; z-index:5; width:12px; height:12px; margin:-6px 0 0 -6px; border-radius:50%;
+  background:#f58426; border:1px solid #fff7dc; box-shadow:0 0 0 3px rgba(245,132,38,.22), 0 8px 18px rgba(0,0,0,.38); }
+.board-zone{ position:absolute; z-index:1; border:1px solid rgba(255,255,255,.2); border-radius:10px;
+  background:rgba(122,162,255,.12); box-shadow:inset 0 0 18px rgba(122,162,255,.08); display:flex; align-items:flex-start; justify-content:center; }
+.board-zone b{ margin-top:4px; color:#dbe8ff; font-size:10px; font-weight:1000; text-shadow:0 1px 2px rgba(0,0,0,.45); }
+.board-zone.risk{ background:rgba(245,132,38,.16); border-color:rgba(245,132,38,.36); }
+.board-zone.risk b{ color:#ffd19a; }
+.board-zone.defense{ background:rgba(80,190,118,.13); border-color:rgba(80,190,118,.36); }
+.board-zone.defense b{ color:#aff0c3; }
+.board-zone.advantage{ background:rgba(255,207,106,.13); border-color:rgba(255,207,106,.34); }
+.board-zone.advantage b{ color:#ffdf84; }
 .board-arrow{ position:absolute; z-index:2; height:2px; background:#ffcf6a; transform-origin:left center; box-shadow:0 0 12px rgba(255,207,106,.6); }
 .board-arrow::after{ content:""; position:absolute; right:-1px; top:-4px; border-left:8px solid #ffcf6a; border-top:5px solid transparent; border-bottom:5px solid transparent; }
 .board-arrow span{ position:absolute; left:50%; top:-18px; transform:translateX(-50%); color:#111820; background:#ffcf6a;
   border-radius:5px; padding:1px 4px; font-size:9px; font-weight:950; white-space:nowrap; }
+.board-arrow.defense{ background:#7ee49b; box-shadow:0 0 12px rgba(126,228,155,.44); }
+.board-arrow.defense::after{ border-left-color:#7ee49b; }
+.board-arrow.defense span{ background:#7ee49b; }
+.board-arrow.risk{ background:#ff8b68; box-shadow:0 0 12px rgba(255,139,104,.5); }
+.board-arrow.risk::after{ border-left-color:#ff8b68; }
+.board-arrow.risk span{ background:#ff8b68; color:#180b06; }
+.board-arrow.attack{ background:#ffcf6a; }
+.tactic-lesson-scrub{ display:grid; grid-template-columns:1fr auto; align-items:center; gap:9px; margin-top:10px; }
+.tactic-lesson-scrub input{ width:100%; accent-color:var(--ny-a); }
+.tactic-lesson-scrub span{ color:#9fb0bf; font-size:11px; font-weight:900; font-variant-numeric:tabular-nums; }
 .tactic-lesson-frame{ display:grid; gap:4px; margin-top:10px; }
 .tactic-lesson-frame b{ color:#fff; font-size:15px; }
 .tactic-lesson-frame span{ color:#cfd7df; font-size:13px; line-height:1.45; }

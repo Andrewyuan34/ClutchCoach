@@ -54,6 +54,7 @@ node tools/check-ai-contract.mjs --url='http://127.0.0.1:8000/live.html?ai_verif
 5. Click `助教提示` and confirm recommendations appear.
 6. Call timeout, click multiple schemes, resume.
 7. Confirm only the final offense/defense schemes are committed to livecast and tactical trace.
+8. Open `看战术板`, click `播放跑位`, and confirm actor/ball coordinates change in `window.__NBA_LIVE_VERIFY__.getState().tacticLessons.currentLesson.board`.
 
 ## Important Files
 

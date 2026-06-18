@@ -60,7 +60,7 @@ http://127.0.0.1:8001/live.html
 7. 暂停后才会进入“指挥台”，正常模式下战术按钮不会默认标“建议”；需要帮助时点“助教提示”。
 8. 打开“助教提示”时，先看本次主要问题，再看 1-2 条助教读法；每条读法都应该带一个清楚的代价。
 9. 点击“采纳这个方向”，确认最终方案里的“代价”从“待拍板”变成具体代价。
-10. 如果战术卡片上有“看战术板”，可以打开 3 帧战术板，理解问题、解法和代价；它是可选学习，不影响数值。
+10. 如果战术卡片上有“看战术板”，可以打开可播放的 2D 跑位战术板，理解问题、解法和代价；它是可选学习，不影响数值。
 11. 暂停期间可以反复试不同战术，只有点击继续比赛时的最终方案会被系统记录。
 12. 回到文字直播，看战术、换人、暂停是否在后续回合里产生反馈，尤其看采纳的代价有没有被直播点名。
 13. 终场后看“教练组复盘”，确认它能说清楚一次关键暂停解决了什么、接受了什么代价、后续反馈如何验证，并能从复盘再次打开相关战术板。
@@ -106,10 +106,11 @@ Agent 验证时建议走这条路径：
 9. 确认指挥台消失并自动回到文字直播。
 10. 检查文字直播只出现一条`最终布置`摘要，并且只结算最后的战术 / 换人方案。
 11. 如果打开了“助教提示”，采纳一条助教读法，确认 `最终方案` 里有具体 `代价`。
-12. 在指挥台里点击 `看战术板`，确认能打开 `团队传导` 或 `收缩护框` 的 3 帧战术板，并能前进 / 后退 / 自动播放。
-13. 恢复比赛后等待 2-4 个回合，确认直播反馈能提到这次接受的代价或执行结果。
-14. 可以把比赛快进到终场，确认 `postgame.recap` 最多展示 2 条关键暂停，并且每条都有 `coachActionId` / `adjustmentId` / `acceptedCost`。
-15. 读取 `#ai-verification-state` 或 `window.__NBA_LIVE_VERIFY__.getState()`。
+12. 在指挥台里点击 `看战术板`，确认能打开 `团队传导` 或 `收缩护框` 的时间轴战术板，并能前进 / 后退 / 播放跑位。
+13. 拖动 `tactic-lesson-scrubber`，确认球员圆点、篮球、箭头和区域会随时间轴变化。
+14. 恢复比赛后等待 2-4 个回合，确认直播反馈能提到这次接受的代价或执行结果。
+15. 可以把比赛快进到终场，确认 `postgame.recap` 最多展示 2 条关键暂停，并且每条都有 `coachActionId` / `adjustmentId` / `acceptedCost`。
+16. 读取 `#ai-verification-state` 或 `window.__NBA_LIVE_VERIFY__.getState()`。
 
 关键判断：
 
@@ -125,7 +126,10 @@ Agent 验证时建议走这条路径：
 - 采纳助教读法后，`command.commit.acceptedCost` 应存在。
 - 后续反馈出现后，`command.commit.feedbackReferencesAcceptedCost` 应为 `true`。
 - `tacticLessons.available` 应包含 `motion` 和 `paint`。
-- 打开战术板时，`tacticLessons.currentLesson.frameCount` 应至少为 `3`。
+- 打开战术板时，`tacticLessons.currentLesson.frameCount` 应至少为 `3`，`durationMs` 应大于 `0`。
+- `tacticLessons.currentLesson.board.actors[]` 应能读到当前 DOM 坐标，拖动进度条后至少一名球员坐标应变化。
+- `tacticLessons.currentLesson.board.ball` 应存在，且 `ballTransfers` 应大于等于 `1`。
+- `window.__NBA_LIVE_VERIFY__.sampleTacticLessonMotion("motion")` 应返回 `maxActorTravel`、`ballHolders` 和多个采样帧。
 - `lesson.watchfor_used_by_feedback` 应通过，表示战术板观察点和直播反馈使用同一套标签。
 - `postgame.recap.traceable_when_present` 应通过，表示赛后复盘不是孤立文案，而是能追溯到暂停、助教读法和直播证据。
 - 暂停期间多次点击战术，不应立即增加多个正式调整窗口。

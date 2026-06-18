@@ -30,7 +30,7 @@ src/tactical.mjs               # 战术因果、调整窗口、直播 trace、AI
 src/utils.mjs                  # DOM / 随机 / 数值工具
 src/data/commentary-data.mjs   # 阵容、战术、模板语料
 src/data/series-pbp-data.mjs   # 前四场逐回合数据与氛围语料
-src/data/tactical-data.mjs     # 球员战术特征、战术适配规则、对手反制规则
+src/data/tactical-data.mjs     # 球员战术特征、战术适配规则、战术板时间轴数据
 src/styles/live.css           # 直播页样式
 docs/architecture.md          # 模块说明与维护约定
 docs/ai-verification.md       # AI 原生验证协议
@@ -59,7 +59,7 @@ AI 原生验证：
 http://127.0.0.1:8000/live.html?ai_verify=1&seed=demo-001
 ```
 
-页面会暴露 `window.__NBA_LIVE_VERIFY__`、`#ai-verification-state` JSON 快照，以及稳定的 `data-testid`。详细协议见 [docs/ai-verification.md](docs/ai-verification.md)。
+页面会暴露 `window.__NBA_LIVE_VERIFY__`、`#ai-verification-state` JSON 快照，以及稳定的 `data-testid`。战术板打开时还会暴露球员 / 篮球的 DOM 坐标，方便验证跑位动画。详细协议见 [docs/ai-verification.md](docs/ai-verification.md)。
 
 ## 部署
 

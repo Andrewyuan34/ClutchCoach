@@ -27,6 +27,7 @@ window.__NBA_LIVE_VERIFY__.getState()
 window.__NBA_LIVE_VERIFY__.getAssertions()
 window.__NBA_LIVE_VERIFY__.getAssertSummary()
 window.__NBA_LIVE_VERIFY__.getContract()
+window.__NBA_LIVE_VERIFY__.sampleTacticLessonMotion("motion")
 window.__NBA_LIVE_VERIFY__.queryByTestId("score-knicks")
 window.__NBA_LIVE_VERIFY__.clickByTestId("pick-team-knicks")
 ```
@@ -108,6 +109,8 @@ tactic-lesson-modal
 tactic-lesson-title
 tactic-lesson-intent
 tactic-lesson-board
+tactic-lesson-scrubber
+tactic-lesson-time
 tactic-lesson-frame-text
 tactic-lesson-tags
 tactic-lesson-prev
@@ -166,11 +169,45 @@ player-bench-mcbride
 - If the player adopts a staff read, the final plan exposes the accepted cost before continuing.
 - A committed command window writes one traceable `最终布置` livecast summary instead of replaying every draft click.
 - A committed staff read carries `adoptedAdviceId`, `acceptedCost`, and follow-up feedback rows that can reference the accepted cost.
-- The tactic lesson MVP exposes `motion` and `paint`, each with intent, risks, watch points, and at least 3 frames.
+- The tactic lesson board exposes `motion` and `paint`, each with intent, risks, watch points, and at least 3 timeline beats.
+- Each tactic lesson has a timeline duration, actor list, moving actor tracks, ball transfers, active arrows / zones, and a cost path that overlaps its `watchFor` tags.
+- When a tactic lesson modal is open, the rendered board must contain actor coordinates, a ball marker, and a scrubber synced to the timeline.
 - If a committed tradeoff links to a tactic lesson, the committed `watchFor` tags overlap that lesson's `watchFor` tags.
 - Tactical state exists once the verifier is initialized.
 - Selected-team lineup profiles exist after a team/game is active.
 - Required `data-testid` anchors are present.
+
+## Tactic Lesson Timeline Snapshot
+
+`getState().tacticLessons` exposes both authored data and rendered board state:
+
+```text
+available
+openedLessonId
+visible
+currentLesson.playheadMs
+currentLesson.durationMs
+currentLesson.actorCount
+currentLesson.movingActorCount
+currentLesson.ballTransfers
+currentLesson.costPath
+currentLesson.board.actors[]
+currentLesson.board.ball
+currentLesson.board.activeArrows
+currentLesson.board.activeZones
+currentLesson.motionProbe
+lessons[].timeline.maxActorTravel
+```
+
+`currentLesson.board.actors[]` contains `id`, `side`, `x`, and `y`, read from the live DOM. `currentLesson.board.ball` contains the current holder and position. This lets an agent drag `tactic-lesson-scrubber`, call `getState()` again, and prove the visible board moved.
+
+For data-only checks, call:
+
+```js
+window.__NBA_LIVE_VERIFY__.sampleTacticLessonMotion("paint", [0, 1500, 3250, 5400])
+```
+
+The sampler returns deterministic actor positions, ball holders, and `maxActorTravel` without needing to advance the match clock.
 
 ## Tactical Trace Snapshot
 

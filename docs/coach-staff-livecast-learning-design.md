@@ -790,6 +790,11 @@ MVP 只需要三类反馈：
 | 解法 | 这个战术如何解决 |
 | 代价 | 对手可能如何惩罚 |
 
+实现修订：
+
+当前版本把“三帧讲解”升级为“时间轴跑位”。
+语义上仍保留问题 / 解法 / 代价这些节点，但球员、篮球、箭头、风险区域会随 `playheadMs` 连续移动。玩家可以点上一步 / 下一步跳到节点，也可以播放跑位或拖动进度条观察细节。
+
 如果这 2 个战术板不能让玩家更理解暂停选择，就不要继续扩到 6 个。
 
 ### 6.4 动画触发位置
@@ -1194,6 +1199,11 @@ staff.feedback.references_committed_tradeoff
 lesson.every_scheme_has_intent
 lesson.every_scheme_has_risks
 lesson.frame_count_minimum
+lesson.timeline.present
+lesson.timeline.moving_actors
+lesson.timeline.motion_distance
+lesson.timeline.ball_transfers
+lesson.modal.renders_timeline
 lesson.watchfor_used_by_feedback
 ```
 
@@ -1208,7 +1218,7 @@ command.feedback.references_accepted_cost
 command.feedback.explain_rows_lte_two
 ```
 
-学习动画相关断言等 Phase 3 再接入。
+学习动画相关断言已随 Phase 3 接入：AI 能看到 authored timeline，也能在战术板弹层打开时读取 DOM 上的球员坐标、篮球位置、进度条状态和当前 active arrows / zones。
 
 ### 10.3 Debug 价值
 
@@ -1477,7 +1487,7 @@ command.feedback.explain_rows_lte_two
 - 新增 2D 半场战术板组件。
 - 新增 `TACTIC_LESSONS` 数据。
 - 先做 `收缩护框` 和 `团队传导`。
-- 每个战术 3 帧：问题、解法、代价。
+- 每个战术用时间轴表达跑位，保留问题、解法、代价三个以上的语义节点。
 - 指挥台战术卡片加入“看战术板”入口。
 
 首批战术：
@@ -1490,7 +1500,7 @@ command.feedback.explain_rows_lte_two
 验收：
 
 ```text
-玩家能从战术板看到意图、需求、风险、观察点。
+玩家能从战术板看到意图、需求、风险、观察点，并能看见球员和球按时间轴移动。
 动画不阻塞正常比赛。
 看过动画后，玩家能更准确理解对应直播反馈。
 ```
@@ -1551,12 +1561,13 @@ command.feedback.explain_rows_lte_two
 | 教练组意见布局 | 需要移动端第一屏方案 |
 | 采纳 / 查看依据交互 | 需要按钮层级设计 |
 | 战术板弹层 | 需要 2D 半场画布或 DOM 方案 |
-| 战术动画控制 | 上一步 / 下一步 / 自动播放 |
+| 战术动画控制 | 上一步 / 下一步 / 播放跑位 / 拖动进度 |
 
 当前实现补充：
 
 - 移动端第一屏已采用“暂停简报 + 本次取舍 + 最终方案 + 模式切换”的压缩结构。
-- 战术板弹层已用 DOM 半场实现，并支持上一步、下一步、自动播放。
+- 战术板弹层已用 DOM 半场实现，并支持上一步、下一步、播放跑位、拖动进度条。
+- 战术板 DOM 已输出 `data-ai-actor-id`、`data-ai-x`、`data-ai-y`、`data-ai-ball` 等坐标，AI 可以验证可见棋盘是否真的随时间轴移动。
 - 终场复盘已加战术板入口，但还没有独立的赛后战术学院。
 
 ### 14.3 数据资源
@@ -1572,7 +1583,7 @@ command.feedback.explain_rows_lte_two
 
 当前实现补充：
 
-- `CoachStaffBriefing`、`acceptedCost`、`watchFor`、`TACTIC_LESSONS`、`commandStaff`、`tacticLessons` 已接入。
+- `CoachStaffBriefing`、`acceptedCost`、`watchFor`、`TACTIC_LESSONS.timeline`、`commandStaff`、`tacticLessons` 已接入。
 - 新增 `commandHistory` 和 `postgameRecap`，用于赛后复盘与 AI 追溯。
 - `chosenTradeoffs` 仍未做成独立数组，当前由 `committedPlan.acceptedCost`、`adoptedAdviceId`、`watchFor` 表达。
 - `lessonWatchFor` 还没有独立字段，当前通过 `lessonId + watchFor` 关联反馈。

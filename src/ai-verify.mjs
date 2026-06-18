@@ -1,7 +1,7 @@
-import { ROSTERS } from "./data/commentary-data.mjs?v=coach-recap-28";
-import { TACTIC_LESSONS } from "./data/tactical-data.mjs?v=coach-recap-28";
-import { S } from "./state.mjs?v=coach-recap-28";
-import { compactTacticalState } from "./tactical.mjs?v=coach-recap-28";
+import { ROSTERS } from "./data/commentary-data.mjs?v=tactic-timeline-30";
+import { TACTIC_LESSONS } from "./data/tactical-data.mjs?v=tactic-timeline-30";
+import { S } from "./state.mjs?v=tactic-timeline-30";
+import { compactTacticalState } from "./tactical.mjs?v=tactic-timeline-30";
 
 export const AI_VERIFY_CONTRACT = Object.freeze({
   protocol: "nba-live-ai-verification",
@@ -65,6 +65,8 @@ export const AI_VERIFY_CONTRACT = Object.freeze({
     "tactic-lesson-title",
     "tactic-lesson-intent",
     "tactic-lesson-board",
+    "tactic-lesson-scrubber",
+    "tactic-lesson-time",
     "tactic-lesson-frame-text",
     "tactic-lesson-tags",
     "tactic-lesson-prev",
@@ -116,6 +118,7 @@ export function initAiVerification() {
     getAssertions: () => buildAssertions(),
     getAssertSummary: () => summarizeAssertions(buildAssertions()),
     sync: (eventName = "manual") => syncAiVerification(eventName),
+    sampleTacticLessonMotion: (lessonId, sampleMs = null) => sampleTacticLessonMotion(lessonId, sampleMs),
     queryByTestId: (testId) => document.querySelector(`[data-testid="${cssEscape(testId)}"]`),
     clickByTestId: (testId) => {
       const el = document.querySelector(`[data-testid="${cssEscape(testId)}"]`);
@@ -471,6 +474,42 @@ function buildAssertions() {
       details: lessonSignals.lessons.map((lesson) => `${lesson.lessonId}:${lesson.frameCount}`).join(","),
     },
     {
+      id: "lesson.timeline.present",
+      pass: lessonSignals.lessons.every((lesson) => lesson.timeline.durationMs > 0 && lesson.timeline.actorCount >= 5),
+      details: lessonSignals.lessons.map((lesson) => `${lesson.lessonId}:${lesson.timeline.durationMs}ms/${lesson.timeline.actorCount}actors`).join(","),
+    },
+    {
+      id: "lesson.timeline.moving_actors",
+      pass: lessonSignals.lessons.every((lesson) => lesson.timeline.movingActorCount >= 3),
+      details: lessonSignals.lessons.map((lesson) => `${lesson.lessonId}:${lesson.timeline.movingActorCount}`).join(","),
+    },
+    {
+      id: "lesson.timeline.motion_distance",
+      pass: lessonSignals.lessons.every((lesson) => lesson.timeline.maxActorTravel >= 8),
+      details: lessonSignals.lessons.map((lesson) => `${lesson.lessonId}:${lesson.timeline.maxActorTravel}`).join(","),
+    },
+    {
+      id: "lesson.timeline.ball_transfers",
+      pass: lessonSignals.lessons.every((lesson) => lesson.timeline.ballTransfers >= 1),
+      details: lessonSignals.lessons.map((lesson) => `${lesson.lessonId}:${lesson.timeline.ballTransfers}`).join(","),
+    },
+    {
+      id: "lesson.timeline.cost_path_present",
+      pass: lessonSignals.lessons.every((lesson) => lesson.timeline.costPath.some((tag) => lesson.watchFor.includes(tag))),
+      details: lessonSignals.lessons.map((lesson) => `${lesson.lessonId}:${lesson.timeline.costPath.join("/") || "none"}`).join(","),
+    },
+    {
+      id: "lesson.modal.renders_timeline",
+      pass: !lessonSignals.visible || (
+        lessonSignals.currentLesson?.board.actorCount >= lessonSignals.currentLesson?.actorCount &&
+        lessonSignals.currentLesson?.board.ballPresent &&
+        lessonSignals.currentLesson?.board.scrubberMax >= lessonSignals.currentLesson?.durationMs
+      ),
+      details: lessonSignals.currentLesson
+        ? `visible=${lessonSignals.visible}, actors=${lessonSignals.currentLesson.board.actorCount}/${lessonSignals.currentLesson.actorCount}, ball=${lessonSignals.currentLesson.board.ballPresent}, scrubber=${lessonSignals.currentLesson.board.scrubberValue}/${lessonSignals.currentLesson.board.scrubberMax}`
+        : `visible=${lessonSignals.visible}`,
+    },
+    {
       id: "lesson.watchfor_used_by_feedback",
       pass: !commitSignals.lessonId || lessonSignals.lessons.some((lesson) => lesson.lessonId === commitSignals.lessonId && commitSignals.watchFor.some((tag) => lesson.watchFor.includes(tag))),
       details: `commitLesson=${commitSignals.lessonId || "none"}, watchFor=${commitSignals.watchFor.join(",") || "none"}.`,
@@ -557,6 +596,13 @@ function tacticLessonSignals() {
   const openedLessonId = S.tacticLesson?.lessonId || (visible ? (modal?.dataset.aiLessonId || "") : "");
   const current = openedLessonId ? TACTIC_LESSONS[openedLessonId] : null;
   const frameIndex = Number(modal?.dataset.aiFrameIndex || S.tacticLesson?.frameIndex || 0);
+  const lessonTimeline = (lesson) => lesson?.timeline || null;
+  const beatCount = (lesson) => lessonTimeline(lesson)?.beats?.length || lesson.frames?.length || 0;
+  const movingActorCount = (lesson) => Object.values(lessonTimeline(lesson)?.tracks || {}).filter((track) => {
+    if (!Array.isArray(track) || track.length < 2) return false;
+    const first = track[0];
+    return track.some((point) => Math.abs((point.x || 0) - (first.x || 0)) > 0.5 || Math.abs((point.y || 0) - (first.y || 0)) > 0.5);
+  }).length;
   const lessons = Object.values(TACTIC_LESSONS).map((lesson) => ({
     lessonId: lesson.lessonId,
     kind: lesson.kind,
@@ -566,8 +612,18 @@ function tacticLessonSignals() {
     needs: clone(lesson.needs || []),
     risks: clone(lesson.risks || []),
     watchFor: clone(lesson.watchFor || []),
-    frameCount: lesson.frames?.length || 0,
+    frameCount: beatCount(lesson),
+    timeline: {
+      durationMs: lessonTimeline(lesson)?.durationMs || 0,
+      actorCount: lessonTimeline(lesson)?.actors?.length || 0,
+      movingActorCount: movingActorCount(lesson),
+      maxActorTravel: timelineMaxActorTravel(lesson),
+      ballTransfers: Math.max(0, (lessonTimeline(lesson)?.ball?.length || 1) - 1),
+      arrowCount: lessonTimeline(lesson)?.arrows?.length || 0,
+      costPath: clone(lessonTimeline(lesson)?.costPath || []),
+    },
   }));
+  const board = boardLessonDomSignals(modal);
   return {
     available: lessons.map((lesson) => lesson.lessonId),
     openedLessonId,
@@ -577,14 +633,114 @@ function tacticLessonSignals() {
       id: current.lessonId,
       title: current.title,
       frameIndex,
-      frameCount: current.frames.length,
-      frameLabel: current.frames[frameIndex]?.label || "",
+      frameCount: beatCount(current),
+      frameLabel: current.timeline?.beats?.[frameIndex]?.label || current.frames?.[frameIndex]?.label || "",
+      playheadMs: Number(modal?.dataset.aiPlayheadMs || S.tacticLesson?.playheadMs || 0),
+      durationMs: Number(modal?.dataset.aiDurationMs || current.timeline?.durationMs || 0),
+      actorCount: Number(modal?.dataset.aiTimelineActors || current.timeline?.actors?.length || 0),
+      movingActorCount: Number(modal?.dataset.aiMovingActors || movingActorCount(current)),
+      ballTransfers: Number(modal?.dataset.aiBallTransfers || Math.max(0, (current.timeline?.ball?.length || 1) - 1)),
+      costPath: clone((modal?.dataset.aiCostPath || "").split(/\s+/).filter(Boolean)),
+      board,
+      motionProbe: sampleTacticLessonMotion(current.lessonId, [0, Math.floor((current.timeline?.durationMs || 1) / 2), current.timeline?.durationMs || 0]),
       needs: clone(current.needs || []),
       risks: clone(current.risks || []),
       watchFor: clone(current.watchFor || []),
     } : null,
     lessons,
   };
+}
+
+function boardLessonDomSignals(modal) {
+  const board = document.getElementById("tactic-lesson-board");
+  const scrubber = document.getElementById("tactic-lesson-scrubber");
+  const actorEls = [...(board?.querySelectorAll(".board-piece[data-ai-actor-id]") || [])];
+  const ballEl = board?.querySelector("[data-ai-ball='true']");
+  return {
+    playheadMs: Number(board?.dataset.aiPlayheadMs || 0),
+    durationMs: Number(board?.dataset.aiDurationMs || 0),
+    actorCount: actorEls.length,
+    activeArrows: Number(board?.dataset.aiActiveArrows || board?.querySelectorAll(".board-arrow").length || 0),
+    activeZones: Number(board?.dataset.aiActiveZones || board?.querySelectorAll(".board-zone").length || 0),
+    ballPresent: !!ballEl,
+    scrubberValue: Number(scrubber?.value || 0),
+    scrubberMax: Number(scrubber?.max || 0),
+    actors: actorEls.map((el) => ({
+      id: el.dataset.aiActorId || "",
+      side: el.dataset.aiSide || "",
+      x: Number(el.dataset.aiX || parsePercent(el.style.left)),
+      y: Number(el.dataset.aiY || parsePercent(el.style.top)),
+    })),
+    ball: ballEl ? {
+      holder: ballEl.dataset.aiHolder || "",
+      x: Number(ballEl.dataset.aiX || parsePercent(ballEl.style.left)),
+      y: Number(ballEl.dataset.aiY || parsePercent(ballEl.style.top)),
+    } : null,
+    modalVisible: isVisible(modal) && !modal?.classList.contains("hidden"),
+  };
+}
+
+function sampleTacticLessonMotion(lessonId, sampleMs = null) {
+  const lesson = TACTIC_LESSONS[lessonId];
+  const timeline = lesson?.timeline;
+  if (!timeline) return null;
+  const duration = Number(timeline.durationMs || 0);
+  const samples = Array.isArray(sampleMs) && sampleMs.length ? sampleMs : [0, Math.floor(duration / 2), duration];
+  const normalized = samples.map((ms) => Math.max(0, Math.min(duration, Number(ms) || 0)));
+  const frames = normalized.map((ms) => ({
+    ms,
+    actors: Object.fromEntries((timeline.actors || []).map((actor) => [actor.id, sampleTrack(timeline.tracks?.[actor.id], ms)])),
+    ballHolder: activeBallHolder(timeline, ms),
+  }));
+  return {
+    lessonId,
+    durationMs: duration,
+    sampleMs: normalized,
+    maxActorTravel: timelineMaxActorTravel(lesson),
+    ballHolders: [...new Set(frames.map((frame) => frame.ballHolder).filter(Boolean))],
+    frames,
+  };
+}
+
+function timelineMaxActorTravel(lesson) {
+  const tracks = lesson?.timeline?.tracks || {};
+  let max = 0;
+  Object.values(tracks).forEach((track) => {
+    if (!Array.isArray(track) || track.length < 2) return;
+    const first = track[0];
+    track.forEach((point) => {
+      const dx = (Number(point.x) || 0) - (Number(first.x) || 0);
+      const dy = (Number(point.y) || 0) - (Number(first.y) || 0);
+      max = Math.max(max, Math.sqrt(dx * dx + dy * dy));
+    });
+  });
+  return Math.round(max * 10) / 10;
+}
+
+function sampleTrack(track, playhead) {
+  if (!Array.isArray(track) || !track.length) return { x: 50, y: 50 };
+  const points = track.slice().sort((a, b) => a.t - b.t);
+  if (playhead <= points[0].t) return { x: points[0].x, y: points[0].y };
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const a = points[i], b = points[i + 1];
+    if (playhead >= a.t && playhead <= b.t) {
+      const k = (playhead - a.t) / Math.max(1, b.t - a.t);
+      return {
+        x: Math.round((a.x + (b.x - a.x) * k) * 10) / 10,
+        y: Math.round((a.y + (b.y - a.y) * k) * 10) / 10,
+      };
+    }
+  }
+  const last = points[points.length - 1];
+  return { x: last.x, y: last.y };
+}
+
+function activeBallHolder(timeline, playhead) {
+  let holder = "";
+  (timeline.ball || []).forEach((event) => {
+    if (event.t <= playhead) holder = event.holder || holder;
+  });
+  return holder;
 }
 
 function postgameRecapSignals() {
@@ -785,6 +941,10 @@ function formatClock(sec) {
 
 function numberText(id) {
   return Number(document.getElementById(id)?.textContent || 0);
+}
+
+function parsePercent(value) {
+  return Number(String(value || "").replace("%", "")) || 0;
 }
 
 function isVisible(el) {

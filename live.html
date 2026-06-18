@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
 <title>虎扑式文字直播 · 2026总决赛</title>
 <link rel="icon" href="data:," />
-<link rel="stylesheet" href="src/styles/live.css?v=coach-recap-28" />
+<link rel="stylesheet" href="src/styles/live.css?v=tactic-timeline-30" />
 </head>
 <body>
 <div id="app" data-testid="app-root">
@@ -257,12 +257,16 @@
     </div>
     <div class="tactic-lesson-intent" id="tactic-lesson-intent" data-testid="tactic-lesson-intent"></div>
     <div class="tactic-board" id="tactic-lesson-board" data-testid="tactic-lesson-board"></div>
+    <div class="tactic-lesson-scrub">
+      <input id="tactic-lesson-scrubber" data-testid="tactic-lesson-scrubber" type="range" min="0" max="100" value="0" />
+      <span id="tactic-lesson-time" data-testid="tactic-lesson-time">0.0s</span>
+    </div>
     <div class="tactic-lesson-frame" id="tactic-lesson-frame-text" data-testid="tactic-lesson-frame-text"></div>
     <div class="tactic-lesson-tags" id="tactic-lesson-tags" data-testid="tactic-lesson-tags"></div>
     <div class="tactic-lesson-controls">
       <button class="btn btn-ghost" id="tactic-lesson-prev" data-testid="tactic-lesson-prev" type="button">上一步</button>
       <button class="btn btn-primary" id="tactic-lesson-next" data-testid="tactic-lesson-next" type="button">下一步</button>
-      <button class="btn btn-ghost" id="tactic-lesson-autoplay" data-testid="tactic-lesson-autoplay" type="button">自动播放</button>
+      <button class="btn btn-ghost" id="tactic-lesson-autoplay" data-testid="tactic-lesson-autoplay" type="button">播放跑位</button>
     </div>
   </div>
 </div>
@@ -304,6 +308,6 @@
   <div class="clutch-sub" id="clutch-sub"></div>
 </div>
 <script type="application/json" id="ai-verification-state" data-testid="ai-verification-state">{}</script>
-<script type="module" src="src/live-sim.mjs?v=coach-recap-28"></script>
+<script type="module" src="src/live-sim.mjs?v=tactic-timeline-30"></script>
 </body>
 </html>
