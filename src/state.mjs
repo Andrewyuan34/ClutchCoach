@@ -21,6 +21,7 @@ export const S = {
     spurs:  { off: "balanced", def: "man" },
   },
   view: "feed",          // feed | box | cmd
+  phase: "live",         // live | command | postgame
   subSel: null,          // 换人选中的场上球员 {team,id}
   tickCount: 0,
   subWindow: false,      // 是否处于换人/调整窗口（节间休息 / 任意一方叫暂停）
@@ -29,6 +30,20 @@ export const S = {
   resumeLabel: "▶ 继续比赛",
   subCountdown: 0,       // 布置倒计时（真实秒）
   subTimer: null,        // 倒计时句柄
+  commandSession: null,  // 当前暂停/节间指挥台会话
+  lastCommandSession: null,
+  commandHistory: [],    // 本场所有已提交的指挥台会话，用于赛后复盘与 AI 追溯
+  postgameRecap: [],     // 终场教练组复盘摘要
+  subWindowLineupBase: null, // 布置窗口开始时的我方场上阵容，用于最终方案摘要
+  commandUi: {
+    mode: "tactics",
+    expandedRecent: false,
+    expandedOffense: false,
+    expandedDefense: false,
+    expandedLineup: false,
+  },
+  tacticLesson: null,    // 当前打开的战术板 { lessonId, frameIndex, openedFrom, autoPlaying }
+  learnedTactics: {},    // 轻量学习记录，不给数值加成，只用于复盘和 AI 验证
   timeouts: { knicks: 7, spurs: 7 },  // NBA规则：常规时间7次；第四节最多保留4次；最后3分钟最多2次；加时每队2次
   timeoutRuleFlags: {},  // 记录第四节/加时暂停规则是否已触发，避免重复提示
   oppTOQ: 0,             // 对手本节已叫暂停次数（限频）

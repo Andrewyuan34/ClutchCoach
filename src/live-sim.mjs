@@ -24,11 +24,12 @@ import {
   DEF_BASE,
   MATCHUP,
   SCHEME_FLAVOR,
-} from "./data/commentary-data.mjs";
-import { SERIES_PBP_LIBRARY, SERIES_ATMOSPHERE } from "./data/series-pbp-data.mjs";
-import { S, QUARTERS, QUARTER_SECONDS, HOME_BY_GAME, STAT_KEYS, CLUTCH_MAP } from "./state.mjs";
-import { $, rand, clamp, fill } from "./utils.mjs";
-import { initAiVerification, installAiDeterminism, syncAiVerification } from "./ai-verify.mjs";
+} from "./data/commentary-data.mjs?v=coach-recap-28";
+import { SERIES_PBP_LIBRARY, SERIES_ATMOSPHERE } from "./data/series-pbp-data.mjs?v=coach-recap-28";
+import { S, QUARTERS, QUARTER_SECONDS, HOME_BY_GAME, STAT_KEYS, CLUTCH_MAP } from "./state.mjs?v=coach-recap-28";
+import { $, rand, clamp, fill } from "./utils.mjs?v=coach-recap-28";
+import { initAiVerification, installAiDeterminism, syncAiVerification } from "./ai-verify.mjs?v=coach-recap-28";
+import { TACTIC_LESSONS } from "./data/tactical-data.mjs?v=coach-recap-28";
 import {
   addCause,
   createAdjustmentWindow,
@@ -43,7 +44,7 @@ import {
   traceForContext,
   updateOpponentAdaptation,
   noteOpponentAdaptationLivecast,
-} from "./tactical.mjs";
+} from "./tactical.mjs?v=coach-recap-28";
 
 installAiDeterminism();
 
@@ -61,8 +62,8 @@ function blockAssistantWrongView(view) {
     focusCoachArea(currentAssistantTargetId() || "situation-line");
     return true;
   }
-  if (S.assistantStep === ASSISTANT_STEPS.ENTER_CMD && view !== "cmd") {
-    focusCoachArea(currentAssistantTargetId() || "tab-cmd");
+  if (S.assistantStep === ASSISTANT_STEPS.ENTER_CMD && view !== "feed") {
+    focusCoachArea(currentAssistantTargetId() || "btn-pause");
     return true;
   }
   if ((S.assistantStep === ASSISTANT_STEPS.SCHEME || S.assistantStep === ASSISTANT_STEPS.SUB_OUT || S.assistantStep === ASSISTANT_STEPS.SUB_IN) && view !== "cmd") {
@@ -95,6 +96,7 @@ function startApp() {
   $("btn-next").onclick = afterGameNext;
   $("btn-restart").onclick = () => location.reload();
   $("btn-pause").onclick = togglePause;
+  if ($("command-continue")) $("command-continue").onclick = togglePause;
   if ($("post-btn-next")) $("post-btn-next").onclick = afterGameNext;
   if ($("post-btn-restart")) $("post-btn-restart").onclick = () => location.reload();
   if ($("crisis-bar")) $("crisis-bar").classList.add("hidden");
@@ -106,19 +108,21 @@ function startApp() {
   };
   $("tab-feed").onclick = () => { if (!blockAssistantWrongView("feed")) setView("feed"); };
   $("tab-box").onclick = () => { if (!blockAssistantWrongView("box")) setView("box"); };
-  $("tab-cmd").onclick = () => {
-    if (blockAssistantWrongView("cmd")) return;
-    setView("cmd");
-    onAssistantGameUiClick("tab-cmd");
-  };
   if ($("coach-help-toggle")) $("coach-help-toggle").onclick = () => {
     if (S.assistantMode) return;
     S.coachHelpOpen = !S.coachHelpOpen;
     renderCmd();
     syncAiVerification("coach-help:toggle");
   };
+  if ($("command-mode-tactics")) $("command-mode-tactics").onclick = () => setCommandMode("tactics");
+  if ($("command-mode-lineup")) $("command-mode-lineup").onclick = () => setCommandMode("lineup");
+  if ($("command-recent-toggle")) $("command-recent-toggle").onclick = () => toggleCommandExpand("recent");
+  if ($("command-lineup-more")) $("command-lineup-more").onclick = () => toggleCommandExpand("lineup");
+  if ($("tactic-lesson-close")) $("tactic-lesson-close").onclick = () => closeTacticLesson();
+  if ($("tactic-lesson-prev")) $("tactic-lesson-prev").onclick = () => stepTacticLesson(-1);
+  if ($("tactic-lesson-next")) $("tactic-lesson-next").onclick = () => stepTacticLesson(1);
+  if ($("tactic-lesson-autoplay")) $("tactic-lesson-autoplay").onclick = () => toggleTacticLessonAuto();
   if ($("coach-prompt")) $("coach-prompt").onclick = () => {
-    if (S.assistantMode && S.assistantStep === ASSISTANT_STEPS.ENTER_CMD) { focusCoachArea("tab-cmd"); return; }
     openCoachPrompt();
   };
   if ($("situation-line")) $("situation-line").onclick = () => onAssistantGameUiClick("situation-line");
@@ -242,7 +246,8 @@ function applySub(team, outId, inId, byCoach, opt = {}) {
   const outP = ROSTERS[team].players.find((p) => p.id === outId);
   const inP = ROSTERS[team].players.find((p) => p.id === inId);
   if (!outP || !inP || isOnCourt(team, inId) || !isOnCourt(team, outId)) return false;
-  const tacticalAction = byCoach && team === S.myTeam
+  const commandDraft = !!(byCoach && team === S.myTeam && S.subWindow);
+  const tacticalAction = byCoach && team === S.myTeam && !commandDraft
     ? createCoachAction("substitution", { team, outId, inId, outName: outP.name, inName: inP.name })
     : null;
   const now = gameElapsedMin();
@@ -265,8 +270,17 @@ function applySub(team, outId, inId, byCoach, opt = {}) {
     causeIds: ["cause.lineup.fit"],
     source: "substitution",
   } : null;
-  if (byCoach && team === S.myTeam) noteCoachAction("换人调整", subTrace);
-  if (!opt.silent) {
+  if (byCoach && team === S.myTeam && !commandDraft) noteCoachAction("换人调整", subTrace);
+  if (commandDraft) {
+    recordCommandDraft("substitution", {
+      team,
+      outId,
+      inId,
+      outName: outP.name,
+      inName: inP.name,
+    });
+  }
+  if (!opt.silent && !commandDraft) {
     const tag = byCoach && team === S.myTeam ? "📋 " : "🔄 ";
     pushFeed(team, `${tag}换人：${inP.name} 换下 ${outP.name}（体力 ${Math.round(outP.stamina)}）。`, {
       team,
@@ -275,8 +289,10 @@ function applySub(team, outId, inId, byCoach, opt = {}) {
     });
     maybeRichFeed("substitution", team, { T: ROSTERS[team].name, O: inP.name, P: outP.name }, 0.7);
   }
-  if (byCoach && team === S.myTeam) {
+  if (byCoach && team === S.myTeam && !commandDraft) {
     markCoachEffect("sub", `${inP.name}换下${outP.name}`, `${outP.name}不用硬撑，${inP.name}带着体力上来补这一段`, subTrace);
+    assistantAfterSub(outId, inId);
+  } else if (commandDraft) {
     assistantAfterSub(outId, inId);
   }
   return { inP, outP };
@@ -524,7 +540,7 @@ function startAssistantTutorial() {
 }
 
 function assistantStepOrder() {
-  return [ASSISTANT_STEPS.SITUATION, ASSISTANT_STEPS.ENTER_CMD, ASSISTANT_STEPS.SCHEME, ASSISTANT_STEPS.TIMEOUT, ASSISTANT_STEPS.SUB_OUT, ASSISTANT_STEPS.SUB_IN, ASSISTANT_STEPS.FINISH];
+  return [ASSISTANT_STEPS.SITUATION, ASSISTANT_STEPS.ENTER_CMD, ASSISTANT_STEPS.SCHEME, ASSISTANT_STEPS.SUB_OUT, ASSISTANT_STEPS.SUB_IN, ASSISTANT_STEPS.FINISH];
 }
 function assistantStepIndex(step) {
   const order = assistantStepOrder();
@@ -533,7 +549,7 @@ function assistantStepIndex(step) {
 
 function currentAssistantTargetId() {
   if (S.assistantStep === ASSISTANT_STEPS.SITUATION) return "situation-line";
-  if (S.assistantStep === ASSISTANT_STEPS.ENTER_CMD) return "tab-cmd";
+  if (S.assistantStep === ASSISTANT_STEPS.ENTER_CMD) return "btn-pause";
   if (S.assistantStep === ASSISTANT_STEPS.TIMEOUT) return "btn-pause";
   if (S.assistantStep === ASSISTANT_STEPS.SCHEME && S.assistantTarget) return `coach-scheme-${S.assistantTarget.kind}-${S.assistantTarget.key}`;
   if (S.assistantStep === ASSISTANT_STEPS.SUB_OUT && S.assistantSubPlan) return `coach-player-${S.assistantSubPlan.outId}`;
@@ -542,7 +558,7 @@ function currentAssistantTargetId() {
 }
 
 function assistantTargetType(step) {
-  if (step === ASSISTANT_STEPS.ENTER_CMD) return "tab";
+  if (step === ASSISTANT_STEPS.ENTER_CMD) return "button";
   if (step === ASSISTANT_STEPS.TIMEOUT) return "button";
   if (step === ASSISTANT_STEPS.SCHEME) return "scheme";
   if (step === ASSISTANT_STEPS.SUB_OUT || step === ASSISTANT_STEPS.SUB_IN) return "player";
@@ -563,9 +579,9 @@ function showAssistantStep(step) {
     title = "先看比分下面那句话";
     body = "看这条局势。它会告诉你现在该不该出手。点一下。";
   } else if (step === ASSISTANT_STEPS.ENTER_CMD) {
-    btn = "点高亮指挥台";
-    title = "现在该你站出来";
-    body = "对手起势了。点【指挥台】，你要做调整。";
+    btn = "点高亮暂停";
+    title = "现在把比赛按下来";
+    body = "对手起势了。先点【叫暂停】，暂停后才会进入指挥台做完整布置。";
   } else if (step === ASSISTANT_STEPS.SCHEME) {
     btn = "点击高亮战术";
     title = "第一次调战术";
@@ -574,7 +590,7 @@ function showAssistantStep(step) {
   } else if (step === ASSISTANT_STEPS.TIMEOUT) {
     btn = "点击高亮暂停按钮";
     title = "第一次叫暂停";
-    body = "现在叫暂停，打断对面节奏，并打开换人窗口。";
+    body = "现在叫暂停，打断对面节奏，并进入指挥台完成战术和换人布置。";
   } else if (step === ASSISTANT_STEPS.SUB_OUT) {
     btn = "点高亮场上球员";
     title = "先选要换下的人";
@@ -588,7 +604,7 @@ function showAssistantStep(step) {
   } else if (step === ASSISTANT_STEPS.FINISH) {
     btn = "交给我吧";
     title = "可以了，教练";
-    body = "你已经会看局势、进指挥台、调战术、叫暂停、换人。接下来我只在危险时提醒。";
+    body = "你已经会看局势、叫暂停、进入暂停指挥台、调战术、换人。接下来我只在危险时提醒。";
   }
 
   const gameClickStep = step !== ASSISTANT_STEPS.FINISH;
@@ -635,11 +651,6 @@ function onAssistantGameUiClick(id) {
     beginGamePlayback();
     return true;
   }
-  if (S.assistantStep === ASSISTANT_STEPS.ENTER_CMD && id === "tab-cmd") {
-    clearCoachPrompt();
-    showAssistantStep(ASSISTANT_STEPS.SCHEME);
-    return true;
-  }
   return false;
 }
 
@@ -662,6 +673,10 @@ function beginGamePlayback() {
   if (S.gameOver) return;
   S.coachIntroOpen = false;
   S.tutorialOpen = false;
+  if (!S.subWindow) {
+    S.phase = "live";
+    S.commandSession = null;
+  }
   if (!S.openingStarted) {
     S.openingStarted = true;
     pushFeed("system", `🏀 G${S.gameNo} 正式开打！${ROSTERS[S.possessionTeam].name}率先拿到球权。`);
@@ -685,6 +700,15 @@ function startGame() {
   S.subWindow = false;
   S.subBy = null;
   S.subWindowSchemeBase = null;
+  S.subWindowLineupBase = null;
+  resetCommandUi();
+  S.phase = "live";
+  S.commandSession = null;
+  S.lastCommandSession = null;
+  S.commandHistory = [];
+  S.postgameRecap = [];
+  closeTacticLesson({ sync: false });
+  S.tacticLesson = null;
   clearInterval(S.subTimer);
   S.subCountdown = 0;
   S.timeouts = { knicks: 7, spurs: 7 };
@@ -759,33 +783,612 @@ function scheduleNext(ms) {
   S.timer = setTimeout(tick, ms ?? S.speed);
 }
 
+function resetCommandUi(mode = "tactics") {
+  S.commandUi = {
+    mode,
+    expandedRecent: false,
+    expandedOffense: false,
+    expandedDefense: false,
+    expandedLineup: false,
+  };
+}
+
+function setCommandMode(mode) {
+  if (!S.subWindow) return;
+  if (mode !== "tactics" && mode !== "lineup") return;
+  S.commandUi.mode = mode;
+  renderCmd();
+  syncAiVerification(`command-mode:${mode}`);
+}
+
+function toggleCommandExpand(section) {
+  if (!S.commandUi) resetCommandUi();
+  const key = section === "recent" ? "expandedRecent"
+    : section === "offense" ? "expandedOffense"
+    : section === "defense" ? "expandedDefense"
+    : section === "lineup" ? "expandedLineup"
+    : "";
+  if (!key) return;
+  S.commandUi[key] = !S.commandUi[key];
+  renderCmd();
+  syncAiVerification(`command-expand:${section}:${S.commandUi[key]}`);
+}
+
+function commandReasonLabel(by) {
+  if (!by) return "节间布置：比赛自然停表，可以调整战术和轮换。";
+  if (by === S.myTeam) {
+    const promptText = S.coachPrompt?.text ? `触发信号：${S.coachPrompt.text}` : "你主动叫暂停，把比赛按下来重新布置。";
+    return promptText;
+  }
+  return `${ROSTERS[by].name}叫暂停，比赛短暂停表。`;
+}
+
+function recentFeedTexts(limit = 4) {
+  const rows = [...document.querySelectorAll("#feed .feed-row")];
+  return rows.slice(-limit).map((row) => row.innerText.trim()).filter(Boolean);
+}
+
+function createCommandSession(by, msg, opt = {}) {
+  const contextIds = (S.tactical?.contextHistory || []).slice(-5).map((ctx) => ctx.contextId || ctx.possessionId).filter(Boolean);
+  const livecastIds = (S.tactical?.livecastTrace || []).slice(-5).map((row) => row.livecastId).filter(Boolean);
+  return {
+    id: `cmd-${S.gameNo}-${S.quarter}-${S.tickCount}-${S.tactical?.adjustmentSeq || 0}`,
+    reason: by === S.myTeam ? "player_timeout" : (!by ? "break" : "opponent_timeout"),
+    by: by || null,
+    openedAt: { quarter: S.quarter, clock: S.clock, tick: S.tickCount },
+    reasonText: opt.reasonText || commandReasonLabel(by),
+    message: msg || "",
+    sourceContextIds: contextIds,
+    sourceLivecastIds: livecastIds,
+    recentFeed: recentFeedTexts(4),
+    staffBriefing: null,
+    adoptedAdviceId: "",
+    acceptedCost: "",
+    watchFor: [],
+    drafts: [],
+    committedPlan: null,
+    commitTrace: null,
+    committed: false,
+  };
+}
+
+function clonePlain(value) {
+  return value == null ? value : JSON.parse(JSON.stringify(value));
+}
+
+function rememberCommandSession(session) {
+  if (!session?.committed || !session.committedPlan) return;
+  if (!Array.isArray(S.commandHistory)) S.commandHistory = [];
+  const entry = clonePlain(session);
+  const existingIndex = S.commandHistory.findIndex((item) => item.id === entry.id);
+  if (existingIndex >= 0) {
+    entry.feedbackRows = S.commandHistory[existingIndex].feedbackRows || entry.feedbackRows || [];
+    S.commandHistory[existingIndex] = entry;
+  } else {
+    entry.feedbackRows = entry.feedbackRows || [];
+    S.commandHistory.push(entry);
+  }
+  S.commandHistory = S.commandHistory.slice(-8);
+}
+
+function commandSessionMatchesTrace(session, trace) {
+  const plan = session?.committedPlan || null;
+  if (!plan || !trace) return false;
+  return (trace.coachActionId && trace.coachActionId === plan.coachActionId) ||
+    (trace.adjustmentId && trace.adjustmentId === plan.adjustmentId) ||
+    (trace.commandSessionId && trace.commandSessionId === session.id);
+}
+
+function recordCommandFeedbackTrace(trace, text) {
+  if (!trace?.coachActionId && !trace?.adjustmentId && !trace?.commandSessionId) return;
+  const feedback = {
+    livecastId: trace.livecastId || "",
+    coachActionId: trace.coachActionId || "",
+    adjustmentId: trace.adjustmentId || "",
+    acceptedCost: trace.acceptedCost || "",
+    adoptedAdviceId: trace.adoptedAdviceId || "",
+    lessonId: trace.lessonId || "",
+    feedbackKind: trace.feedbackKind || trace.source || "",
+    text: String(text || "").replace(/<[^>]+>/g, ""),
+    quarter: S.quarter,
+    clock: S.clock,
+    tick: S.tickCount,
+  };
+  const append = (session) => {
+    if (!commandSessionMatchesTrace(session, trace)) return false;
+    if (!Array.isArray(session.feedbackRows)) session.feedbackRows = [];
+    if (!session.feedbackRows.some((row) => row.livecastId && row.livecastId === feedback.livecastId)) {
+      session.feedbackRows.push(feedback);
+    }
+    return true;
+  };
+  append(S.lastCommandSession);
+  if (Array.isArray(S.commandHistory)) {
+    S.commandHistory.forEach((session) => append(session));
+  }
+}
+
+function recordCommandDraft(type, payload = {}) {
+  if (!S.commandSession) return;
+  if (!Array.isArray(S.commandSession.drafts)) S.commandSession.drafts = [];
+  S.commandSession.drafts.push({
+    type,
+    payload,
+    quarter: S.quarter,
+    clock: S.clock,
+    tick: S.tickCount,
+  });
+}
+
+const COMMAND_COSTS = {
+  corner_three: { label: "弱侧底角", short: "底角三分", feedback: "弱侧底角被放出来，对手已经开始找那一侧" },
+  fatigue: { label: "主力体力", short: "体力消耗", feedback: "主力体力继续被消耗，下一段轮换会更难" },
+  turnover: { label: "传导失误", short: "失误风险", feedback: "多传一次带来出球压力，失误风险开始抬头" },
+  rebound: { label: "篮板保护", short: "篮板风险", feedback: "空间变好以后，篮板保护少了一只手" },
+  star_fatigue: { label: "核心体力", short: "核心消耗", feedback: "核心继续硬解，体力账会往后拖" },
+  pace_control: { label: "追分速度", short: "节奏偏慢", feedback: "稳住失误的同时，追分速度也被压下来" },
+  role_offense: { label: "进攻火力", short: "火力下降", feedback: "防守站稳了，但进攻端少了一个处理点" },
+};
+
+const WATCH_FOR_LABELS = {
+  paint_touch_denied: "禁区触球是否被压住",
+  corner_three_allowed: "底角是否被放空",
+  transition_chance: "转换机会是否变多",
+  starter_fatigue: "主力体力是否继续下滑",
+  early_release: "弱侧是否出现出球口",
+  turnover_risk: "多传一次是否带来失误",
+  star_touch: "核心是否能稳定接管",
+  star_fatigue: "核心体力账是否变重",
+  open_three: "外线空位是否出来",
+  rebound_risk: "篮板保护是否变薄",
+  free_throw_pressure: "罚球压力是否形成",
+  paint_crowded: "禁区是否继续拥堵",
+  turnover_down: "失误是否减少",
+  pace_slow: "追分速度是否变慢",
+  stable_matchup: "对位是否站稳",
+  star_touch_allowed: "对手核心是否仍能单打",
+  star_cooled: "对手核心是否降温",
+  trap_pressure: "包夹压力是否回来",
+  scheme_execution: "战术是否跑出第一波效果",
+  defense_execution: "防守第一落点是否到位",
+  cost_watch: "代价是否开始出现",
+};
+
+function costLabel(costId) {
+  return COMMAND_COSTS[costId]?.short || COMMAND_COSTS[costId]?.label || "执行代价";
+}
+
+function watchForLabel(tag) {
+  return WATCH_FOR_LABELS[tag] || tag;
+}
+
+let tacticLessonTimer = null;
+const TACTIC_LESSON_MS = 1350;
+
+function lessonForScheme(kind, key) {
+  return Object.values(TACTIC_LESSONS).find((lesson) => lesson.kind === kind && lesson.key === key) || null;
+}
+
+function lessonIdForAdvice(advice) {
+  const rec = advice?.recommendation || {};
+  return lessonForScheme(rec.kind, rec.key)?.lessonId || "";
+}
+
+function openTacticLesson(lessonId, openedFrom = "scheme-card") {
+  const lesson = TACTIC_LESSONS[lessonId];
+  if (!lesson || (!S.subWindow && S.phase !== "postgame")) return;
+  stopTacticLessonAuto();
+  S.tacticLesson = {
+    lessonId,
+    frameIndex: 0,
+    openedFrom,
+    autoPlaying: false,
+    openedAt: { quarter: S.quarter, clock: S.clock, tick: S.tickCount },
+  };
+  markTacticLessonFrame(lessonId, 0);
+  renderTacticLessonModal();
+  syncAiVerification(`lesson:open:${lessonId}`);
+}
+
+function closeTacticLesson({ sync = true } = {}) {
+  stopTacticLessonAuto();
+  S.tacticLesson = null;
+  const modal = $("tactic-lesson-modal");
+  if (modal) modal.classList.add("hidden");
+  if (sync) syncAiVerification("lesson:close");
+}
+
+function stepTacticLesson(delta) {
+  const state = S.tacticLesson;
+  const lesson = state ? TACTIC_LESSONS[state.lessonId] : null;
+  if (!state || !lesson) return;
+  const next = clamp((state.frameIndex || 0) + delta, 0, lesson.frames.length - 1);
+  if (next === state.frameIndex) {
+    if (state.autoPlaying && next >= lesson.frames.length - 1) stopTacticLessonAuto();
+    renderTacticLessonModal();
+    return;
+  }
+  state.frameIndex = next;
+  markTacticLessonFrame(state.lessonId, next);
+  if (state.autoPlaying && next >= lesson.frames.length - 1) stopTacticLessonAuto();
+  renderTacticLessonModal();
+  syncAiVerification(`lesson:frame:${state.lessonId}:${next}`);
+}
+
+function toggleTacticLessonAuto() {
+  const state = S.tacticLesson;
+  if (!state) return;
+  if (state.autoPlaying) {
+    stopTacticLessonAuto();
+    renderTacticLessonModal();
+    syncAiVerification("lesson:auto:off");
+    return;
+  }
+  const lesson = TACTIC_LESSONS[state.lessonId];
+  if (!lesson) return;
+  state.autoPlaying = true;
+  renderTacticLessonModal();
+  tacticLessonTimer = setInterval(() => {
+    if (!S.tacticLesson?.autoPlaying) { stopTacticLessonAuto(); return; }
+    stepTacticLesson(1);
+  }, TACTIC_LESSON_MS);
+  syncAiVerification("lesson:auto:on");
+}
+
+function stopTacticLessonAuto() {
+  clearInterval(tacticLessonTimer);
+  tacticLessonTimer = null;
+  if (S.tacticLesson) S.tacticLesson.autoPlaying = false;
+}
+
+function markTacticLessonFrame(lessonId, frameIndex) {
+  const lesson = TACTIC_LESSONS[lessonId];
+  if (!lesson) return;
+  if (!S.learnedTactics) S.learnedTactics = {};
+  const prev = S.learnedTactics[lessonId] || {};
+  const framesSeen = Array.isArray(prev.framesSeen) ? prev.framesSeen.slice() : [];
+  if (!framesSeen.includes(frameIndex)) framesSeen.push(frameIndex);
+  S.learnedTactics[lessonId] = {
+    ...prev,
+    lessonId,
+    framesSeen: framesSeen.sort((a, b) => a - b),
+    watched: framesSeen.length >= lesson.frames.length,
+    lastWatchedAt: { gameNo: S.gameNo, quarter: S.quarter, clock: S.clock, tick: S.tickCount },
+  };
+}
+
+function renderTacticLessonModal() {
+  const modal = $("tactic-lesson-modal");
+  const state = S.tacticLesson;
+  const lesson = state ? TACTIC_LESSONS[state.lessonId] : null;
+  if (!modal || !lesson) {
+    if (modal) modal.classList.add("hidden");
+    return;
+  }
+  const index = clamp(state.frameIndex || 0, 0, lesson.frames.length - 1);
+  const frame = lesson.frames[index];
+  modal.classList.remove("hidden");
+  modal.dataset.aiLessonId = lesson.lessonId;
+  modal.dataset.aiFrameIndex = String(index);
+  modal.dataset.aiFrameCount = String(lesson.frames.length);
+  modal.dataset.aiWatchFor = lesson.watchFor.join(" ");
+  modal.dataset.aiOpenedFrom = state.openedFrom || "";
+  if ($("tactic-lesson-title")) $("tactic-lesson-title").textContent = `${lesson.title} · ${frame.label}`;
+  if ($("tactic-lesson-intent")) $("tactic-lesson-intent").textContent = `意图：${lesson.intent}`;
+  if ($("tactic-lesson-board")) $("tactic-lesson-board").innerHTML = renderTacticBoard(frame);
+  if ($("tactic-lesson-frame-text")) {
+    $("tactic-lesson-frame-text").innerHTML =
+      `<b>${frame.title}</b><span>${frame.text}</span><em>观察点：${frame.focus}</em>`;
+  }
+  if ($("tactic-lesson-tags")) {
+    $("tactic-lesson-tags").innerHTML =
+      `<span>需要：${lesson.needs.join(" / ")}</span>` +
+      `<span>风险：${lesson.risks.join(" / ")}</span>` +
+      `<span>直播观察：${lesson.watchFor.join(" / ")}</span>`;
+  }
+  const prev = $("tactic-lesson-prev");
+  const next = $("tactic-lesson-next");
+  const auto = $("tactic-lesson-autoplay");
+  if (prev) prev.disabled = index <= 0;
+  if (next) next.disabled = index >= lesson.frames.length - 1;
+  if (auto) auto.textContent = state.autoPlaying ? "停止播放" : "自动播放";
+}
+
+function renderTacticBoard(frame) {
+  const players = [
+    ...(frame.offense || []).map((p) => boardPiece(p, "offense")),
+    ...(frame.defense || []).map((p) => boardPiece(p, "defense")),
+  ].join("");
+  const arrows = (frame.arrows || []).map(boardArrow).join("");
+  return `
+    <div class="half-court">
+      <div class="court-paint"></div>
+      <div class="court-rim"></div>
+      <div class="court-arc"></div>
+      ${arrows}
+      ${players}
+    </div>`;
+}
+
+function boardPiece(piece, side) {
+  const ball = piece.ball ? `<i class="ball-dot"></i>` : "";
+  return `<span class="board-piece ${side}" style="left:${piece.x}%;top:${piece.y}%">${piece.label}${ball}</span>`;
+}
+
+function boardArrow(arrow) {
+  const [x1, y1] = arrow.from;
+  const [x2, y2] = arrow.to;
+  const dx = x2 - x1, dy = y2 - y1;
+  const length = Math.sqrt(dx * dx + dy * dy);
+  const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+  return `<i class="board-arrow" style="left:${x1}%;top:${y1}%;width:${length}%;transform:rotate(${angle}deg)"><span>${arrow.label || ""}</span></i>`;
+}
+
+function detectCommandProblem(recOff, recDef) {
+  const my = S.myTeam, opp = S.oppTeam;
+  const model = my ? renderCoachReadModel(my) : null;
+  const profile = S.tactical?.lineupProfiles?.[my] || null;
+  const recent = S.tactical?.contextHistory?.slice(-4) || [];
+  const recentAgainstMe = recent.filter((ctx) => ctx.defenseTeam === my);
+  const opponentHadAdvantage = recentAgainstMe.some((ctx) => (ctx.causeIds || []).includes("cause.scheme.counter"));
+  if (S.run.team === opp && S.run.pts >= 6) {
+    return { id: "run_pressure", title: `${ROSTERS[opp].short}打出 ${S.run.pts}-0，先决定怎么止血`, source: "run" };
+  }
+  if (profile?.tiredPlayers?.length || (profile?.averageStamina ?? 100) < 58) {
+    return { id: "fatigue", title: "场上体力开始影响执行，继续硬撑会付账", source: "lineup" };
+  }
+  if (opponentHadAdvantage || ["inside", "pace"].includes(S.scheme[opp]?.off)) {
+    return { id: "paint_pressure", title: "对手正在冲击禁区，护框压力上升", source: "context" };
+  }
+  if (["press", "double"].includes(S.scheme[opp]?.def) || model?.schemeFit === "bad") {
+    return { id: "ball_pressure", title: "推进和第一传被压住，需要给持球点出口", source: "scheme" };
+  }
+  if (S.scheme[opp]?.def === "paint" || S.scheme[opp]?.def === "zone") {
+    return { id: "spacing", title: "对手收缩站位，外线和弱侧机会会更关键", source: "scheme" };
+  }
+  return { id: "read_game", title: "比赛进入拉锯，先选择这次暂停的优先级", source: "neutral" };
+}
+
+function staffRead(id, role, claim, recommendation, costId, watchFor, opt = {}) {
+  return {
+    adviceId: id,
+    role,
+    claim,
+    recommendation,
+    costId,
+    costText: costLabel(costId),
+    watchFor,
+    confidence: opt.confidence || "medium",
+    evidence: opt.evidence || [],
+  };
+}
+
+function buildCoachStaffBriefing(recOff, recDef) {
+  const problem = detectCommandProblem(recOff, recDef);
+  const readsByProblem = {
+    paint_pressure: [
+      staffRead("advice-defense-paint", "defense", "收缩护框能先止住篮下，但底角会被放出来。", { kind: "def", key: "paint" }, "corner_three", ["paint_touch_denied", "corner_three_allowed"]),
+      staffRead("advice-offense-pace", "offense", "保持提速能打乱他们落位，但主力体力会继续掉。", { kind: "off", key: "pace" }, "fatigue", ["transition_chance", "starter_fatigue"]),
+    ],
+    ball_pressure: [
+      staffRead("advice-offense-motion", "offense", "团队传导能给持球点出口，但多传一次也会带来失误风险。", { kind: "off", key: "motion" }, "turnover", ["early_release", "turnover_risk"]),
+      staffRead("advice-offense-iso", "offense", "让核心单打能减少传球压力，但会继续消耗核心体力。", { kind: "off", key: "iso" }, "star_fatigue", ["star_touch", "star_fatigue"]),
+    ],
+    spacing: [
+      staffRead("advice-offense-perimeter", "offense", "外线火力能惩罚收缩，但篮板保护会变薄。", { kind: "off", key: "perimeter" }, "rebound", ["open_three", "rebound_risk"]),
+      staffRead("advice-offense-inside", "offense", "继续冲篮下能造杀伤，但会撞进他们的护框。", { kind: "off", key: "inside" }, "turnover", ["free_throw_pressure", "paint_crowded"]),
+    ],
+    fatigue: [
+      staffRead("advice-offense-balanced", "offense", "先打均衡能降低失误和消耗，但追分速度会慢。", { kind: "off", key: "balanced" }, "pace_control", ["turnover_down", "pace_slow"]),
+      staffRead("advice-defense-man", "defense", "回到人盯人能少跑轮转，但对手核心会得到单点处理。", { kind: "def", key: "man" }, "role_offense", ["stable_matchup", "star_touch_allowed"]),
+    ],
+    run_pressure: [
+      staffRead("advice-defense-double", "defense", "包夹核心能先打断对手气势，但角色球员会获得空位。", { kind: "def", key: "double" }, "corner_three", ["star_cooled", "corner_three_allowed"]),
+      staffRead("advice-offense-iso", "offense", "交给核心硬解能稳住情绪，但体力和包夹压力都会上来。", { kind: "off", key: "iso" }, "star_fatigue", ["star_touch", "trap_pressure"]),
+    ],
+    read_game: [
+      staffRead("advice-offense-rec", "offense", `${OFF_SCHEMES[recOff].name}能针对对手站位，但要接受${costLabel(recOff === "perimeter" ? "rebound" : "turnover")}。`, { kind: "off", key: recOff }, recOff === "perimeter" ? "rebound" : "turnover", ["scheme_execution", "cost_watch"]),
+      staffRead("advice-defense-rec", "defense", `${DEF_SCHEMES[recDef].name}能先处理对手强点，但会放大另一侧风险。`, { kind: "def", key: recDef }, recDef === "paint" || recDef === "double" ? "corner_three" : "role_offense", ["defense_execution", "cost_watch"]),
+    ],
+  };
+  const reads = readsByProblem[problem.id] || readsByProblem.read_game;
+  return {
+    briefingId: `staff-${S.gameNo}-${S.quarter}-${S.tickCount}`,
+    commandSessionId: S.commandSession?.id || "",
+    primaryProblem: problem.id,
+    primaryProblemText: problem.title,
+    source: problem.source,
+    sourceLivecastIds: S.commandSession?.sourceLivecastIds || [],
+    sourceContextIds: S.commandSession?.sourceContextIds || [],
+    reads: reads.slice(0, 2),
+  };
+}
+
+function ensureCommandStaffBriefing(recOff, recDef) {
+  if (!S.commandSession) return null;
+  if (!S.commandSession.staffBriefing) S.commandSession.staffBriefing = buildCoachStaffBriefing(recOff, recDef);
+  return S.commandSession.staffBriefing;
+}
+
+function roleLabel(role) {
+  return role === "offense" ? "进攻助教"
+    : role === "defense" ? "防守助教"
+    : role === "lineup" ? "轮换助教"
+    : "首席助教";
+}
+
+function adviceMatchesCurrent(advice) {
+  if (!advice || !S.myTeam) return false;
+  const rec = advice.recommendation || {};
+  if (rec.kind === "off" || rec.kind === "def") return S.scheme[S.myTeam]?.[rec.kind] === rec.key;
+  return false;
+}
+
+function selectedStaffAdvice() {
+  const reads = S.commandSession?.staffBriefing?.reads || [];
+  const adopted = reads.find((read) => read.adviceId === S.commandSession?.adoptedAdviceId);
+  return adopted && adviceMatchesCurrent(adopted) ? adopted : null;
+}
+
+function staffAdviceSummary(advice) {
+  if (!advice) return "";
+  const rec = advice.recommendation || {};
+  if (rec.kind === "off") return `${roleLabel(advice.role)}建议进攻打【${OFF_SCHEMES[rec.key]?.name || rec.key}】`;
+  if (rec.kind === "def") return `${roleLabel(advice.role)}建议防守切【${DEF_SCHEMES[rec.key]?.name || rec.key}】`;
+  return `${roleLabel(advice.role)}建议处理本次主要问题`;
+}
+
+function applyStaffAdvice(adviceId) {
+  if (!S.commandSession) return;
+  const advice = (S.commandSession.staffBriefing?.reads || []).find((item) => item.adviceId === adviceId);
+  if (!advice) return;
+  S.commandSession.adoptedAdviceId = advice.adviceId;
+  S.commandSession.acceptedCost = advice.costId;
+  S.commandSession.watchFor = advice.watchFor || [];
+  const rec = advice.recommendation || {};
+  if ((rec.kind === "off" || rec.kind === "def") && rec.key && S.scheme[S.myTeam]?.[rec.kind] !== rec.key) {
+    setMyScheme(rec.kind, rec.key);
+  } else {
+    renderCmd();
+  }
+  syncAiVerification(`staff-advice:${adviceId}`);
+}
+
+function renderCommandStage() {
+  renderCommandTopbar();
+  const title = $("command-title");
+  const reason = $("command-reason");
+  const risk = $("command-risk");
+  const recent = $("command-recent");
+  if (!title || !reason || !recent) return;
+  const session = S.commandSession;
+  title.textContent = session?.by === S.myTeam
+    ? "为什么叫停"
+    : "节间要点";
+  reason.textContent = session?.reasonText || "读懂刚才的问题，再决定怎么调整。";
+  const model = S.myTeam ? renderCoachReadModel(S.myTeam) : null;
+  const riskText = model?.risk ? String(model.risk).replace(/^风险[:：]\s*/, "") : "";
+  if (risk) risk.textContent = riskText ? `最大风险：${riskText}` : "最大风险：观察对手下一波反制。";
+  recent.innerHTML = "";
+  recent.classList.toggle("expanded", !!S.commandUi?.expandedRecent);
+  const allRecent = session?.recentFeed || [];
+  const visibleCount = S.commandUi?.expandedRecent ? 4 : 1;
+  allRecent.slice(-visibleCount).forEach((text) => {
+    const row = document.createElement("div");
+    row.className = "command-recent-row";
+    row.textContent = text;
+    recent.appendChild(row);
+  });
+  const toggle = $("command-recent-toggle");
+  if (toggle) {
+    const canExpand = allRecent.length > 2;
+    toggle.classList.toggle("hidden", !canExpand);
+    toggle.textContent = S.commandUi?.expandedRecent ? "收起复盘" : `展开复盘（${Math.min(4, allRecent.length)}条）`;
+  }
+}
+
+function renderCommandTopbar() {
+  const title = $("command-topbar-title");
+  const meta = $("command-topbar-meta");
+  if (title) title.textContent = S.subBy ? "暂停布置" : "节间布置";
+  if (meta) {
+    const my = S.myTeam ? ROSTERS[S.myTeam].short : "我方";
+    const opp = S.oppTeam ? ROSTERS[S.oppTeam].short : "对手";
+    meta.textContent = `${my} ${S.score[S.myTeam] ?? 0} - ${S.score[S.oppTeam] ?? 0} ${opp} · Q${S.quarter} ${fmtClock(S.clock)}`;
+  }
+}
+
+function renderCommandStaff(showHints, recOff, recDef) {
+  const wrap = $("command-staff");
+  const problem = $("command-staff-problem");
+  const readsBox = $("command-staff-reads");
+  if (!wrap || !problem || !readsBox) return;
+  const briefing = ensureCommandStaffBriefing(recOff, recDef);
+  if (!briefing) return;
+  wrap.dataset.aiPrimaryProblem = briefing.primaryProblem || "";
+  wrap.dataset.aiVisibleReads = showHints ? String(Math.min(2, briefing.reads.length)) : "0";
+  problem.textContent = briefing.primaryProblemText || "先决定这次暂停要解决什么。";
+  readsBox.innerHTML = "";
+  if (!showHints) {
+    const muted = document.createElement("div");
+    muted.className = "staff-read muted";
+    muted.innerHTML =
+      `<div class="staff-read-head"><span class="staff-read-role">首席助教</span><span class="staff-read-cost">待拍板</span></div>` +
+      `<div class="staff-read-claim">打开助教提示后，会给出两种有代价的处理方向。</div>`;
+    readsBox.appendChild(muted);
+    return;
+  }
+  briefing.reads.slice(0, 2).forEach((advice) => {
+    const row = document.createElement("div");
+    const adopted = advice.adviceId === S.commandSession?.adoptedAdviceId;
+    const aligned = adviceMatchesCurrent(advice);
+    const active = (adopted && aligned) || aligned;
+    row.className = "staff-read" + (active ? " active" : "");
+    row.dataset.aiAdviceId = advice.adviceId;
+    row.dataset.aiRole = advice.role;
+    row.dataset.aiCost = advice.costId;
+    row.dataset.aiAdopted = String(adopted && aligned);
+    row.dataset.aiAligned = String(aligned);
+    row.innerHTML =
+      `<div class="staff-read-head"><span class="staff-read-role">${roleLabel(advice.role)}</span>` +
+      `<span class="staff-read-cost">代价：${advice.costText}</span></div>` +
+      `<div class="staff-read-claim">${advice.claim}</div>` +
+      `<button class="staff-read-action" type="button" data-advice-id="${advice.adviceId}">${adopted && aligned ? "已纳入方案" : (aligned ? "确认接受代价" : "采纳这个方向")}</button>`;
+    const btn = row.querySelector("button");
+    if (btn) {
+      btn.disabled = adopted && aligned;
+      btn.onclick = () => applyStaffAdvice(advice.adviceId);
+    }
+    readsBox.appendChild(row);
+  });
+}
+
 /* 开启「换人/调整」窗口：暂停模拟、解锁换人、切到指挥台
    seconds = 布置倒计时（真实秒）；by = 谁叫的暂停（null=节间休息） */
 function openSubWindow(msg, btnText, seconds, by, opt = {}) {
   S.running = false;
   S.subWindow = true;
   S.subBy = by || null;
+  S.phase = "command";
+  S.commandSession = createCommandSession(by, msg, opt);
+  resetCommandUi("tactics");
   S.subWindowSchemeBase = S.myTeam && S.scheme[S.myTeam]
     ? { off: S.scheme[S.myTeam].off, def: S.scheme[S.myTeam].def }
     : null;
+  S.subWindowLineupBase = S.myTeam && S.onCourt[S.myTeam] ? S.onCourt[S.myTeam].slice() : null;
   S.resumeLabel = btnText || "▶ 继续比赛";
   clearTimeout(S.timer);
   if (msg) pushFeed("system", msg, opt);
   richFeed(by ? "timeout" : "quarterBreak", "system", {}, 1);
-  setView("cmd");          // 自动切到指挥台，方便立刻调整
+  setView("cmd");          // 暂停/节间才进入指挥台
   startSubCountdown(seconds || 20);
   updateScoreboard();
 }
 
 /* 关闭窗口：锁定换人、恢复模拟 */
-function closeSubWindow() {
+function closeSubWindow({ announce = true } = {}) {
+  closeTacticLesson({ sync: false });
   clearInterval(S.subTimer);
   S.subCountdown = 0;
-  commitSubWindowSchemePlan();
+  if (announce) pushFeed("system", S.subBy ? "⏱ 暂停结束，比赛继续！" : "⏱ 布置结束，比赛继续！");
+  const committedPlan = commitSubWindowSchemePlan();
+  if (S.commandSession) {
+    S.commandSession.committed = true;
+    S.commandSession.committedAt = { quarter: S.quarter, clock: S.clock, tick: S.tickCount };
+    S.commandSession.finalScheme = S.myTeam && S.scheme[S.myTeam] ? { ...S.scheme[S.myTeam] } : null;
+    S.commandSession.finalLineup = S.myTeam && S.onCourt[S.myTeam] ? S.onCourt[S.myTeam].slice() : [];
+    if (committedPlan) S.commandSession.committedPlan = committedPlan;
+    S.lastCommandSession = clonePlain(S.commandSession);
+    rememberCommandSession(S.lastCommandSession);
+  }
   S.subWindow = false;
   S.subBy = null;
   S.subWindowSchemeBase = null;
+  S.subWindowLineupBase = null;
   S.subSel = null;
+  resetCommandUi();
+  S.phase = "live";
+  S.commandSession = null;
   S.running = true;
   $("btn-pause").textContent = "⏸ 叫暂停";
   updatePauseCountdown();
@@ -803,8 +1406,16 @@ function startSubCountdown(sec) {
     S.subCountdown--;
     updatePauseBtn();
     if (S.subCountdown <= 0) {
+      if (S.assistantMode && (
+        S.assistantStep === ASSISTANT_STEPS.SCHEME ||
+        S.assistantStep === ASSISTANT_STEPS.SUB_OUT ||
+        S.assistantStep === ASSISTANT_STEPS.SUB_IN
+      )) {
+        S.subCountdown = 1;
+        updatePauseBtn();
+        return;
+      }
       clearInterval(S.subTimer);
-      pushFeed("system", "⏱ 暂停结束，比赛继续！");
       closeSubWindow();
     }
   }, 1000);
@@ -813,8 +1424,13 @@ function startSubCountdown(sec) {
 // 暂停期间按钮显示「继续 + 倒计时」
 function updatePauseBtn() {
   const b = $("btn-pause");
-  if (!b) return;
-  b.textContent = S.subWindow ? `${S.resumeLabel} (${Math.max(0, S.subCountdown)}s)` : "⏸ 叫暂停";
+  const label = S.subWindow ? `${S.resumeLabel} (${Math.max(0, S.subCountdown)}s)` : "⏸ 叫暂停";
+  if (b) b.textContent = label;
+  const cb = $("command-continue");
+  if (cb) {
+    cb.textContent = S.subWindow ? "继续" : "继续比赛";
+    cb.disabled = !S.subWindow;
+  }
   updatePauseCountdown();
 }
 function updatePauseCountdown() {
@@ -825,18 +1441,132 @@ function updatePauseCountdown() {
   box.classList.remove("hidden");
   time.textContent = left;
   time.classList.toggle("danger", left <= 5);
-  if (label) label.textContent = S.subBy ? "暂停布置倒计时" : "节间/加时布置倒计时";
+  if (label) label.textContent = S.subBy ? "倒计时" : "节间";
 }
 
 function commitSubWindowSchemePlan() {
-  if (!S.myTeam || !S.subWindowSchemeBase || !S.scheme[S.myTeam]) return;
+  if (!S.myTeam || !S.subWindowSchemeBase || !S.scheme[S.myTeam]) return null;
   const base = S.subWindowSchemeBase;
   const current = S.scheme[S.myTeam];
-  ["off", "def"].forEach((kind) => {
-    if (base[kind] && current[kind] && base[kind] !== current[kind]) {
-      commitMySchemeChange(kind, current[kind], base[kind], "setup-window");
-    }
+  const schemeChanges = ["off", "def"].filter((kind) => base[kind] && current[kind] && base[kind] !== current[kind]).map((kind) => {
+    const pool = kind === "off" ? OFF_SCHEMES : DEF_SCHEMES;
+    return {
+      kind,
+      from: base[kind],
+      to: current[kind],
+      fromName: pool[base[kind]]?.name || base[kind],
+      toName: pool[current[kind]]?.name || current[kind],
+    };
   });
+  const lineupChanges = lineupChangePairs().map(({ inP, outP }) => ({
+    inId: inP.id,
+    outId: outP.id,
+    inName: inP.name,
+    outName: outP.name,
+  }));
+  const selectedAdvice = selectedStaffAdvice();
+  const adoptedAdviceId = selectedAdvice?.adviceId || "";
+  const acceptedCost = selectedAdvice?.costId || "";
+  const lessonId = lessonIdForAdvice(selectedAdvice);
+  const lessonWatchFor = lessonId ? (TACTIC_LESSONS[lessonId]?.watchFor || []) : [];
+  let watchFor = selectedAdvice?.watchFor || [];
+  if (lessonWatchFor.length && !watchFor.some((tag) => lessonWatchFor.includes(tag))) {
+    watchFor = [...new Set([...watchFor, ...lessonWatchFor.slice(0, 2)])];
+  }
+  if (!schemeChanges.length && !lineupChanges.length && !adoptedAdviceId) return null;
+
+  const expectedCauseIds = new Set(["cause.coach.adjustment_success"]);
+  schemeChanges.forEach((change) => {
+    if (change.kind === "off") expectedCauseIds.add("cause.scheme.counter");
+    if (change.kind === "def") expectedCauseIds.add("cause.defense.stable");
+  });
+  if (lineupChanges.length) expectedCauseIds.add("cause.lineup.fit");
+  if (selectedAdvice?.recommendation?.kind === "off") expectedCauseIds.add("cause.scheme.counter");
+  if (selectedAdvice?.recommendation?.kind === "def") expectedCauseIds.add("cause.defense.stable");
+
+  const tacticalAction = createCoachAction("command_commit", {
+    team: S.myTeam,
+    sessionId: S.commandSession?.id || "",
+    schemeChanges,
+    lineupChanges,
+    drafts: S.commandSession?.drafts || [],
+    adoptedAdviceId,
+    acceptedCost,
+    watchFor,
+    lessonId,
+  });
+  const adjustment = createAdjustmentWindow(tacticalAction, {
+    type: "command_commit",
+    label: "最终布置",
+    targetProblem: "integrated_command",
+    expectedCauseIds: [...expectedCauseIds],
+    adoptedAdviceId,
+    acceptedCost,
+    watchFor,
+    lessonId,
+  });
+  const trace = {
+    coachActionId: tacticalAction.coachActionId,
+    adjustmentId: adjustment.adjustmentId,
+    causeIds: [...expectedCauseIds],
+    source: "command-commit",
+    commandSessionId: S.commandSession?.id || "",
+    adoptedAdviceId,
+    acceptedCost,
+    watchFor,
+    lessonId,
+    feedbackKind: "command_summary",
+  };
+
+  const parts = [];
+  schemeChanges.forEach((change) => {
+    parts.push(`${change.kind === "off" ? "进攻" : "防守"}【${change.toName}】`);
+  });
+  if (lineupChanges.length) {
+    parts.push(`换人 ${lineupChanges.map((change) => `${change.inName}上、${change.outName}下`).join("；")}`);
+  }
+  if (!schemeChanges.length && !lineupChanges.length && selectedAdvice) parts.push(staffAdviceSummary(selectedAdvice));
+  if (acceptedCost) parts.push(`接受代价：${costLabel(acceptedCost)}`);
+  const summaryText = `📋 最终布置：${parts.join("；")}。`;
+  const liveTrace = pushFeed(S.myTeam, summaryText, { team: S.myTeam, coach: true, trace });
+  const coachLabel = `${schemeChanges.length ? "战术" : ""}${lineupChanges.length ? "换人" : ""}${selectedAdvice ? "取舍" : ""}最终布置`;
+  noteCoachAction(coachLabel, liveTrace);
+  stageCoachEffect("command", "最终布置", commandCommitImpact(schemeChanges, lineupChanges, selectedAdvice), liveTrace);
+
+  const committedPlan = {
+    summaryText,
+    schemeChanges,
+    lineupChanges,
+    adoptedAdviceId,
+    acceptedCost,
+    acceptedCostText: acceptedCost ? costLabel(acceptedCost) : "",
+    watchFor,
+    lessonId,
+    staffAdviceSummary: staffAdviceSummary(selectedAdvice),
+    coachActionId: liveTrace.coachActionId,
+    adjustmentId: liveTrace.adjustmentId,
+    livecastId: liveTrace.livecastId,
+    expectedCauseIds: [...expectedCauseIds],
+  };
+  if (S.commandSession) {
+    S.commandSession.committedPlan = committedPlan;
+    S.commandSession.commitTrace = liveTrace;
+  }
+  syncAiVerification("command-commit");
+  return committedPlan;
+}
+
+function commandCommitImpact(schemeChanges, lineupChanges, selectedAdvice = null) {
+  const hasOff = schemeChanges.some((change) => change.kind === "off");
+  const hasDef = schemeChanges.some((change) => change.kind === "def");
+  const hasLineup = lineupChanges.length > 0;
+  if (hasOff && hasDef && hasLineup) return "攻防和体力一起落位，接下来几个回合会集中验证这套方案";
+  if ((hasOff || hasDef) && hasLineup) return "战术方向和轮换同时明确，先看出手质量和体力风险是否回稳";
+  if (hasOff && hasDef) return "攻防方向同时切换，接下来会看对手是否还按原方式惩罚你";
+  if (hasOff) return "进攻触发点已经重排，下一波重点看机会质量";
+  if (hasDef) return "防守落点已经重排，下一波重点看对手核心是否降温";
+  if (selectedAdvice) return `你接受了${costLabel(selectedAdvice.costId)}这个取舍，下一波重点验证助教判断是否成立`;
+  return "体力风险被提前拆掉，轮换效果会在后续回合兑现";
 }
 
 function capTimeouts(max, reason) {
@@ -926,11 +1656,11 @@ function requestPlayerTimeout(fromCrisis = false) {
 // 「叫暂停 / 继续」按钮
 function togglePause() {
   if (S.gameOver) return;
-  if (S.assistantMode && S.tutorialOpen && S.assistantStep !== ASSISTANT_STEPS.TIMEOUT) {
+  if (S.assistantMode && S.tutorialOpen && S.assistantStep !== ASSISTANT_STEPS.TIMEOUT && S.assistantStep !== ASSISTANT_STEPS.ENTER_CMD) {
     focusCoachArea(currentAssistantTargetId() || "btn-pause");
     return;
   }
-  if (S.subWindow || (!S.running && !S.crisisPending)) {
+  if (S.subWindow) {
     closeSubWindow();
   } else if (!S.crisisPending) {
     requestPlayerTimeout(false);
@@ -958,8 +1688,8 @@ function maybeOppTimeout() {
   aiThink(true);           // 借暂停变阵
   autoRotate(opp, true, "暂停批量轮换");
   S.run = { team: null, pts: 0 };
-  openSubWindow(`📣 ${ROSTERS[opp].name} 请求暂停！${onRun ? "想掐断你的得分高潮——" : ""}趁这空档调整你的战术与阵容。`, "▶ 继续比赛", 20, opp);
-  return true;
+  pushFeed("system", `📣 ${ROSTERS[opp].name} 请求暂停！${onRun ? "想掐断你的得分高潮。" : "重新布置下一波攻防。"}`, { mini: true });
+  return false;
 }
 
 function processOpponentAdaptation() {
@@ -1269,11 +1999,12 @@ function runPossession() {
 
 function emitTacticalFeedback(items) {
   (items || []).forEach((item) => {
-    pushFeed(S.myTeam || "system", item.text, {
+    const trace = pushFeed(S.myTeam || "system", item.text, {
       mini: true,
       coachResult: true,
       trace: item.trace,
     });
+    recordCommandFeedbackTrace(trace, item.text);
   });
 }
 
@@ -1553,6 +2284,11 @@ function pushFeed(team, text, opt = {}) {
   if (trace.coachActionId) row.dataset.aiCoachActionId = trace.coachActionId;
   if (trace.adjustmentId) row.dataset.aiAdjustmentId = trace.adjustmentId;
   if (trace.adaptationId) row.dataset.aiAdaptationId = trace.adaptationId;
+  if (trace.commandSessionId) row.dataset.aiCommandSessionId = trace.commandSessionId;
+  if (trace.adoptedAdviceId) row.dataset.aiAdoptedAdviceId = trace.adoptedAdviceId;
+  if (trace.acceptedCost) row.dataset.aiAcceptedCost = trace.acceptedCost;
+  if (trace.lessonId) row.dataset.aiLessonId = trace.lessonId;
+  if (trace.feedbackKind) row.dataset.aiFeedbackKind = trace.feedbackKind;
   if (trace.source) row.dataset.aiTraceSource = trace.source;
   if (opt.score) row.classList.add(team === S.myTeam ? "score-mine" : "score-opp");
   if (opt.big) row.classList.add("big-play");
@@ -1685,10 +2421,10 @@ function clearCoachPrompt() {
 
 function renderCoachPrompt() {
   const box = $("coach-prompt"), txt = $("coach-prompt-text"), tab = $("tab-cmd");
-  if (!box || !txt || !tab) return;
-  const show = !!S.coachPrompt && !S.gameOver && S.view !== "cmd";
+  if (!box || !txt) return;
+  const show = !!S.coachPrompt && !S.gameOver && !S.subWindow && S.view !== "cmd";
   box.classList.toggle("hidden", !show);
-  tab.classList.toggle("has-alert", !!S.coachPrompt && !S.gameOver);
+  if (tab) tab.classList.toggle("has-alert", !!S.coachPrompt && !S.gameOver);
   if (show) txt.textContent = S.coachPrompt.text;
 }
 
@@ -1716,15 +2452,13 @@ function renderCoachUx() {
 }
 
 function openCoachPrompt() {
-  const focus = S.coachPrompt ? S.coachPrompt.focus : "coach-advice";
-  if (focus === "coach-advice" || focus === "sub-advice") S.coachHelpOpen = true;
   if (S.coachStats) S.coachStats.promptOpens++;
-  setView("cmd");
-  setTimeout(() => focusCoachArea(focus), 30);
-  clearCoachPrompt();
-  if (S.assistantMode && S.assistantStep === ASSISTANT_STEPS.ENTER_CMD) {
-    setTimeout(() => showAssistantStep(ASSISTANT_STEPS.SCHEME), 80);
+  if (!S.subWindow && S.myTeam && !S.decisionPending && !S.gameOver) {
+    requestPlayerTimeout(false);
+  } else {
+    setTimeout(() => focusCoachArea("btn-pause"), 30);
   }
+  clearCoachPrompt();
 }
 
 function visualViewportBox() {
@@ -1850,12 +2584,11 @@ function assistantAfterScheme(kind, key) {
   if (!S.assistantMode || S.assistantStep !== ASSISTANT_STEPS.SCHEME) return;
   if (!S.assistantTarget || S.assistantTarget.kind !== kind || S.assistantTarget.key !== key) return;
   hideAssistantModal();
-  pushFeed("system", "🧑‍💼 助教：很好。现在等比赛给你反馈；下一次真正需要止血时，我会带你叫一次暂停。", { mini: true });
-  S.assistantStep = ASSISTANT_STEPS.WAIT_TIMEOUT;
-  S.assistantTarget = { triggerTick: S.tickCount + 4 };
-  setView("feed");
-  S.running = true;
-  scheduleNext(900);
+  S.assistantStep = ASSISTANT_STEPS.SUB_OUT;
+  S.commandUi.mode = "lineup";
+  S.commandUi.expandedLineup = true;
+  renderCmd();
+  setTimeout(() => showAssistantStep(ASSISTANT_STEPS.SUB_OUT), 120);
 }
 
 function maybeTriggerAssistantTutorial() {
@@ -1869,7 +2602,7 @@ function maybeTriggerAssistantTutorial() {
     if (oppRun >= 6 || tired || cold || S.tickCount >= 4) {
       S.running = false;
       clearTimeout(S.timer);
-      S.coachPrompt = { type: "assistant", text: oppRun >= 6 ? `助教：对手打出 ${oppRun}-0，进指挥台处理一下` : "助教：现在出现了需要处理的信号，进指挥台看看", focus: "coach-advice" };
+      S.coachPrompt = { type: "assistant", text: oppRun >= 6 ? `助教：对手打出 ${oppRun}-0，建议叫暂停处理` : "助教：现在出现了需要处理的信号，建议叫暂停", focus: "coach-advice" };
       renderCoachPrompt();
       showAssistantStep(ASSISTANT_STEPS.ENTER_CMD);
     }
@@ -1893,11 +2626,11 @@ function setupAssistantSubPlan() {
 }
 
 function assistantAfterTimeout() {
-  if (!S.assistantMode || S.assistantStep !== ASSISTANT_STEPS.TIMEOUT) return;
-  S.assistantStep = ASSISTANT_STEPS.SUB_OUT;
+  if (!S.assistantMode || (S.assistantStep !== ASSISTANT_STEPS.ENTER_CMD && S.assistantStep !== ASSISTANT_STEPS.TIMEOUT)) return;
+  S.assistantStep = ASSISTANT_STEPS.SCHEME;
   S.subCountdown = Math.max(S.subCountdown, 45);
   updatePauseBtn();
-  setTimeout(() => showAssistantStep(ASSISTANT_STEPS.SUB_OUT), 80);
+  setTimeout(() => showAssistantStep(ASSISTANT_STEPS.SCHEME), 80);
 }
 
 function assistantAfterSub(outId, inId) {
@@ -2048,11 +2781,15 @@ function resolveCrisisGamble() {
   S.crisisGamble = null;
 }
 
-function markCoachEffect(type, title, impact, trace = null) {
+function stageCoachEffect(type, title, impact, trace = null) {
   if (!S.myTeam || S.gameOver) return;
   S.pendingCoachEffect = {
     type, title, impact,
     trace,
+    acceptedCost: trace?.acceptedCost || "",
+    acceptedCostText: trace?.acceptedCost ? costLabel(trace.acceptedCost) : "",
+    adoptedAdviceId: trace?.adoptedAdviceId || "",
+    watchFor: trace?.watchFor || [],
     atTick: S.tickCount,
     myScore: S.score[S.myTeam],
     oppScore: S.score[S.oppTeam],
@@ -2060,11 +2797,26 @@ function markCoachEffect(type, title, impact, trace = null) {
   };
   if (S.coachStats) S.coachStats.effects++;
   clearCoachPrompt();
+  return true;
+}
+
+function markCoachEffect(type, title, impact, trace = null) {
+  if (!stageCoachEffect(type, title, impact, trace)) return;
   pushFeed(S.myTeam, `📋 教练调整：${title} → ${impact}`, {
     team: S.myTeam,
     coach: true,
     trace: trace ? { ...trace, source: "coach-effect" } : undefined,
   });
+}
+
+function commandEffectFeedbackText(effect, positive) {
+  if (!effect?.acceptedCost) return "";
+  const cost = COMMAND_COSTS[effect.acceptedCost];
+  const costText = cost?.short || effect.acceptedCostText || "这次代价";
+  if (positive) {
+    return `这次布置先兑现了目标，但要继续盯住【${costText}】：${cost?.feedback || "代价仍可能在后续回合出现"}。`;
+  }
+  return `这次选择的代价开始露头：【${costText}】正在影响场面，${cost?.feedback || "需要下一次暂停或轮换继续处理"}。`;
 }
 
 function resolvePendingCoachEffect() {
@@ -2079,25 +2831,36 @@ function resolvePendingCoachEffect() {
   else if (momGain >= 2) { result = "调整稳住了局面：气势没有继续被对手压过去。"; positive = true; }
   else if (e.type === "sub") { result = "轮换价值已经显现：体力风险被提前拆掉，不用硬撑到崩。"; positive = true; }
   else if (e.type === "timeout") { result = "暂停价值已经显现：情绪和声浪被压住，比赛重新回到可指挥状态。"; positive = true; }
+  if (e.type === "command") result = commandEffectFeedbackText(e, positive) || result;
   if (positive && S.coachStats) S.coachStats.positiveEffects++;
-  pushFeed(S.myTeam, `✅ ${result}`, {
+  const feedbackText = `✅ ${result}`;
+  const trace = pushFeed(S.myTeam, feedbackText, {
     team: S.myTeam,
     mini: true,
     coachResult: true,
-    trace: e.trace ? { ...e.trace, source: "coach-effect-result" } : undefined,
+    trace: e.trace ? {
+      ...e.trace,
+      source: e.type === "command" ? "command-feedback" : "coach-effect-result",
+      feedbackKind: e.type === "command" ? (positive ? "execution_seen" : "cost_triggered") : "coach_effect",
+    } : undefined,
   });
+  recordCommandFeedbackTrace(trace, feedbackText);
   S.pendingCoachEffect = null;
 }
 
 // ----------------- 视图切换 -----------------
 function setView(v) {
+  if (S.subWindow) v = "cmd";
+  else if (v === "cmd") v = "feed";
   S.view = v;
   $("feed").classList.toggle("hidden", v !== "feed");
   $("box-wrap").classList.toggle("hidden", v !== "box");
   $("cmd-wrap").classList.toggle("hidden", v !== "cmd");
+  if ($("screen-game")) $("screen-game").classList.toggle("command-view", v === "cmd");
+  if ($("view-tabs")) $("view-tabs").classList.toggle("hidden", v === "cmd");
   $("tab-feed").classList.toggle("active", v === "feed");
   $("tab-box").classList.toggle("active", v === "box");
-  $("tab-cmd").classList.toggle("active", v === "cmd");
+  if ($("tab-cmd")) $("tab-cmd").classList.toggle("active", v === "cmd");
   if (v === "box") renderBox();
   if (v === "cmd") renderCmd();
   renderCoachPrompt();
@@ -2221,34 +2984,241 @@ function bestCounterOff(oppDef) {
   return best;
 }
 
+function commandUi() {
+  if (!S.commandUi) resetCommandUi();
+  return S.commandUi;
+}
+
+function renderCommandModeState() {
+  const ui = commandUi();
+  const tactics = $("command-tactics-body");
+  const lineup = $("command-lineup-body");
+  const tacticsBtn = $("command-mode-tactics");
+  const lineupBtn = $("command-mode-lineup");
+  if (tactics) tactics.classList.toggle("hidden", ui.mode !== "tactics");
+  if (lineup) lineup.classList.toggle("hidden", ui.mode !== "lineup");
+  if (tacticsBtn) {
+    tacticsBtn.classList.toggle("active", ui.mode === "tactics");
+    tacticsBtn.setAttribute("aria-pressed", String(ui.mode === "tactics"));
+  }
+  if (lineupBtn) {
+    lineupBtn.classList.toggle("active", ui.mode === "lineup");
+    lineupBtn.setAttribute("aria-pressed", String(ui.mode === "lineup"));
+  }
+}
+
+function schemeLabel(kind, key) {
+  const info = kind === "off" ? OFF_SCHEMES[key] : DEF_SCHEMES[key];
+  return info ? `${info.icon}${info.name}` : "-";
+}
+
+function backupScheme(kind, recKey) {
+  const current = S.scheme[S.myTeam]?.[kind];
+  const pool = kind === "off"
+    ? ["motion", "perimeter", "iso", "inside", "pace", "balanced"]
+    : ["paint", "double", "switch", "man", "zone", "press"];
+  return pool.find((key) => key !== current && key !== recKey) || pool.find((key) => key !== current) || current;
+}
+
+function compactSchemeKeys(kind, recKey) {
+  const current = S.scheme[S.myTeam]?.[kind];
+  return [...new Set([current, recKey, backupScheme(kind, recKey)].filter(Boolean))];
+}
+
+function renderSchemeGroup(kind, recKey, showHints) {
+  const ui = commandUi();
+  const box = $(kind === "off" ? "my-off" : "my-def");
+  if (!box) return;
+  const expanded = kind === "off" ? ui.expandedOffense : ui.expandedDefense;
+  const schemes = kind === "off" ? OFF_SCHEMES : DEF_SCHEMES;
+  const keys = expanded ? Object.keys(schemes) : compactSchemeKeys(kind, recKey);
+  box.classList.toggle("compact", !expanded);
+  box.innerHTML = "";
+  keys.forEach((key) => {
+    const current = S.scheme[S.myTeam]?.[kind] === key;
+    const role = current ? "当前" : (showHints && key === recKey ? "推荐" : "备选");
+    const includeReason = showHints && (expanded || current || key === recKey);
+    const reason = includeReason
+      ? (kind === "off" ? reasonOff(key, S.scheme[S.oppTeam].def) : reasonDef(key, S.scheme[S.oppTeam].off))
+      : "";
+    box.appendChild(schemeBtn(key, schemes[key], kind, recKey, showHints, {
+      compact: !expanded,
+      role,
+      reason,
+    }));
+  });
+  const more = document.createElement("button");
+  more.className = "sch-more";
+  more.type = "button";
+  more.id = kind === "off" ? "command-offense-more" : "command-defense-more";
+  more.setAttribute("data-testid", more.id);
+  more.textContent = expanded
+    ? `收起${kind === "off" ? "进攻" : "防守"}战术`
+    : `更多${kind === "off" ? "进攻" : "防守"}战术`;
+  more.onclick = () => toggleCommandExpand(kind === "off" ? "offense" : "defense");
+  box.appendChild(more);
+}
+
+function lineupChangesText() {
+  const changes = lineupChangePairs().map(({ inP, outP }) => `${inP.name}上，${outP.name}下`);
+  return changes.length ? `换人：${changes.join("；")}` : "换人：暂无";
+}
+
+function lineupChangePairs() {
+  if (!S.myTeam || !S.subWindowLineupBase) return [];
+  const base = S.subWindowLineupBase;
+  const now = S.onCourt[S.myTeam] || [];
+  const changes = [];
+  now.forEach((id, idx) => {
+    if (base[idx] && base[idx] !== id) {
+      const inP = ROSTERS[S.myTeam].players.find((p) => p.id === id);
+      const outP = ROSTERS[S.myTeam].players.find((p) => p.id === base[idx]);
+      if (inP && outP) changes.push({ inP, outP });
+    }
+  });
+  return changes;
+}
+
+function renderCommandFinalPlan() {
+  if (!S.myTeam || !S.scheme[S.myTeam]) return;
+  const off = $("command-final-offense");
+  const def = $("command-final-defense");
+  const subs = $("command-final-subs");
+  const cost = $("command-final-cost");
+  const advice = selectedStaffAdvice();
+  if (off) off.textContent = `进攻：${schemeLabel("off", S.scheme[S.myTeam].off)}`;
+  if (def) def.textContent = `防守：${schemeLabel("def", S.scheme[S.myTeam].def)}`;
+  if (subs) subs.textContent = lineupChangesText();
+  if (cost) {
+    const costText = advice ? costLabel(advice.costId) : "待拍板";
+    cost.textContent = `代价：${costText}`;
+  }
+}
+
+function getSubCandidate(team, recOff) {
+  const court = onCourtArr(team).slice();
+  const bench = benchArr(team).slice();
+  if (!court.length || !bench.length) return null;
+  const out = court.sort((a, b) => {
+    const av = a.stamina + (a.heat || 0) * 0.14 - (a.star ? 5 : 0);
+    const bv = b.stamina + (b.heat || 0) * 0.14 - (b.star ? 5 : 0);
+    return av - bv;
+  })[0];
+  const preferShooting = recOff === "perimeter" || recOff === "motion";
+  const preferDefense = S.scheme[team]?.def === "paint" || S.scheme[team]?.def === "double";
+  const inP = bench.filter((p) => p.stamina > 45).sort((a, b) => {
+    const av = a.stamina + (preferShooting ? a.thr * 42 : 0) + (preferDefense ? a.def * 0.28 : a.off * 0.16);
+    const bv = b.stamina + (preferShooting ? b.thr * 42 : 0) + (preferDefense ? b.def * 0.28 : b.off * 0.16);
+    return bv - av;
+  })[0];
+  if (!out || !inP) return null;
+  const reason = out.stamina < 55
+    ? `${out.name}体力下降，${inP.name}能补这一段强度`
+    : preferShooting
+    ? `当前进攻需要空间，${inP.name}更适合拉开`
+    : preferDefense
+    ? `当前防守需要强度，${inP.name}能补对抗`
+    : `${inP.name}体力更充足，适合先顶一段`;
+  return { out, inP, reason };
+}
+
+function renderLineupRecommendation(recOff, showHints) {
+  const box = $("command-lineup-recommendations");
+  if (!box || !S.myTeam) return;
+  const appliedChanges = lineupChangePairs();
+  if (appliedChanges.length) {
+    const main = appliedChanges.map(({ inP, outP }) => `<b>${inP.name}</b> 上，<b>${outP.name}</b> 下`).join("；");
+    box.innerHTML =
+      `<div class="lineup-rec confirmed">` +
+        `<div class="lineup-rec-title">已加入最终方案</div>` +
+        `<div class="lineup-rec-main">${main}</div>` +
+        `<div class="lineup-rec-reason">继续比赛后按这套轮换执行；还想微调可以展开完整阵容。</div>` +
+      `</div>`;
+    return;
+  }
+  const candidate = getSubCandidate(S.myTeam, recOff);
+  if (!showHints) {
+    const tired = onCourtArr(S.myTeam).slice().sort((a, b) => a.stamina - b.stamina)[0];
+    const fresh = benchArr(S.myTeam).slice().sort((a, b) => b.stamina - a.stamina)[0];
+    const tiredText = tired ? `<b>${tired.name}</b> ${Math.round(tired.stamina)}体力` : "场上体力正常";
+    const freshText = fresh ? `替补最足：<b>${fresh.name}</b> ${Math.round(fresh.stamina)}` : "替补状态正常";
+    box.innerHTML =
+      `<div class="lineup-rec muted">` +
+        `<div class="lineup-rec-title">轮换检查</div>` +
+        `<div class="lineup-rec-main">${tiredText}</div>` +
+        `<div class="lineup-rec-reason">${freshText}。助教提示关闭，保留人工判断。</div>` +
+      `</div>`;
+    return;
+  }
+  if (!candidate) {
+    box.innerHTML = `<div class="lineup-rec muted">轮换暂时正常，优先确认战术方案。</div>`;
+    return;
+  }
+  box.innerHTML =
+    `<div class="lineup-rec">` +
+      `<div class="lineup-rec-title">推荐轮换</div>` +
+      `<div class="lineup-rec-main"><b>${candidate.inP.name}</b> 上，<b>${candidate.out.name}</b> 下</div>` +
+      `<div class="lineup-rec-reason">${candidate.reason}</div>` +
+      `<button class="lineup-rec-apply" id="command-lineup-apply" data-testid="command-lineup-apply" type="button">执行这次换人</button>` +
+    `</div>`;
+  const apply = $("command-lineup-apply");
+  if (apply) {
+    apply.onclick = () => {
+      const result = applySub(S.myTeam, candidate.out.id, candidate.inP.id, true);
+      if (result) {
+        S.subSel = null;
+        renderCmd();
+        syncAiVerification("lineup:recommended-sub");
+      }
+    };
+  }
+}
+
 function renderCmd() {
   if (!S.myTeam) return;
   const opp = S.oppTeam, my = S.myTeam;
   const oOff = S.scheme[opp].off, oDef = S.scheme[opp].def;
   const showHints = shouldShowCoachHints();
+  const ui = commandUi();
 
+  renderCommandStage();
   renderMorale();   // 双方球队气势 + 个人手感速览
+  renderCommandModeState();
 
   // 情报区
   const recDef = bestCounterDef(oOff), recOff = bestCounterOff(oDef);
+  renderCommandStaff(showHints, recOff, recDef);
   renderCoachHelpToggle(showHints);
   renderCoachAdvice(recOff, recDef, oOff, oDef);
   renderCoachReadPanel();
+  renderLineupRecommendation(recOff, showHints);
+  renderCommandFinalPlan();
   $("intel-box").innerHTML =
     `<div class="intel-row"><span class="il-lbl">对手</span>` +
       `<b>${OFF_SCHEMES[oOff].icon}${OFF_SCHEMES[oOff].name}</b>` +
       `<span class="il-tip">防守 <b>${DEF_SCHEMES[oDef].icon}${DEF_SCHEMES[oDef].name}</b></span></div>`;
+  const offSummary = $("offense-summary");
+  const defSummary = $("defense-summary");
+  if (offSummary) offSummary.textContent = showHints
+    ? `当前 ${OFF_SCHEMES[S.scheme[my].off].name} · 推荐 ${OFF_SCHEMES[recOff].name}`
+    : `当前 ${OFF_SCHEMES[S.scheme[my].off].name}`;
+  if (defSummary) defSummary.textContent = showHints
+    ? `当前 ${DEF_SCHEMES[S.scheme[my].def].name} · 推荐 ${DEF_SCHEMES[recDef].name}`
+    : `当前 ${DEF_SCHEMES[S.scheme[my].def].name}`;
 
-  // 我方进攻战术按钮
-  const offBox = $("my-off");
-  offBox.innerHTML = "";
-  Object.keys(OFF_SCHEMES).forEach((k) => offBox.appendChild(schemeBtn(k, OFF_SCHEMES[k], "off", recOff, showHints)));
-  // 我方防守战术按钮
-  const defBox = $("my-def");
-  defBox.innerHTML = "";
-  Object.keys(DEF_SCHEMES).forEach((k) => defBox.appendChild(schemeBtn(k, DEF_SCHEMES[k], "def", recDef, showHints)));
+  renderSchemeGroup("off", recOff, showHints);
+  renderSchemeGroup("def", recDef, showHints);
 
   renderSubs();
+  const full = $("command-lineup-full");
+  const more = $("command-lineup-more");
+  const forceLineup = S.assistantMode && (
+    S.assistantStep === ASSISTANT_STEPS.SUB_OUT ||
+    S.assistantStep === ASSISTANT_STEPS.SUB_IN
+  );
+  if (forceLineup) ui.expandedLineup = true;
+  if (full) full.classList.toggle("hidden", !ui.expandedLineup);
+  if (more) more.textContent = ui.expandedLineup ? "收起完整阵容" : "查看完整阵容";
 }
 
 function shouldShowCoachHints() {
@@ -2272,7 +3242,10 @@ function renderCoachHelpToggle(showHints = shouldShowCoachHints()) {
   }
 }
 
-function schemeBtn(key, info, kind, recKey, showRecommendation) {
+function schemeBtn(key, info, kind, recKey, showRecommendation, opt = {}) {
+  const wrap = document.createElement("div");
+  wrap.className = "scheme-card" + (opt.compact ? " compact" : "");
+  const lesson = lessonForScheme(kind, key);
   const b = document.createElement("button");
   const active = S.scheme[S.myTeam][kind] === key;
   const required = S.assistantMode && S.assistantStep === ASSISTANT_STEPS.SCHEME && S.assistantTarget && S.assistantTarget.kind === kind && S.assistantTarget.key === key;
@@ -2283,9 +3256,13 @@ function schemeBtn(key, info, kind, recKey, showRecommendation) {
   b.dataset.aiSchemeKey = key;
   b.dataset.aiRecommended = String(key === recKey);
   b.dataset.aiRecommendationVisible = String(recommendedVisible);
-  b.className = "sch-btn" + (active ? " active" : "") + (recommendedVisible ? " rec" : "") + (required ? " tutorial-required coach-target-live" : "");
-  b.innerHTML = `<span class="sch-name">${info.icon} ${info.name}</span>` +
-                `<span class="sch-desc">${schemeShort(kind, key)}</span>`;
+  b.dataset.aiSchemeRole = opt.role || "";
+  b.className = "sch-btn" + (opt.compact ? " compact" : "") + (active ? " active" : "") + (recommendedVisible ? " rec" : "") + (required ? " tutorial-required coach-target-live" : "");
+  const reason = opt.reason && showRecommendation ? `<span class="sch-reason">${opt.reason}</span>` : "";
+  const role = opt.role ? `<span class="sch-role">${opt.role}</span>` : "";
+  b.innerHTML = `<span class="sch-name">${info.icon} ${info.name}${role}</span>` +
+                `<span class="sch-desc">${schemeShort(kind, key)}</span>` +
+                reason;
   b.onclick = () => {
     if (S.assistantMode && S.assistantStep === ASSISTANT_STEPS.SCHEME && S.assistantTarget && !required) {
       focusCoachArea(currentAssistantTargetId() || (S.assistantTarget.kind === "off" ? "my-off" : "my-def"));
@@ -2293,7 +3270,19 @@ function schemeBtn(key, info, kind, recKey, showRecommendation) {
     }
     setMyScheme(kind, key);
   };
-  return b;
+  wrap.appendChild(b);
+  if (lesson) {
+    const learn = document.createElement("button");
+    learn.className = "lesson-open";
+    learn.type = "button";
+    learn.id = `lesson-open-${lesson.lessonId}`;
+    learn.setAttribute("data-testid", `lesson-open-${lesson.lessonId}`);
+    learn.dataset.aiLessonId = lesson.lessonId;
+    learn.textContent = "看战术板";
+    learn.onclick = () => openTacticLesson(lesson.lessonId, `scheme-${kind}-${key}`);
+    wrap.appendChild(learn);
+  }
+  return wrap;
 }
 
 function schemeShort(kind, key) {
@@ -2349,24 +3338,8 @@ function getSubSuggestion(team, recOff) {
 function renderCoachAdvice(recOff, recDef, oppOff, oppDef) {
   const box = $("coach-advice");
   if (!box) return;
-  if (!shouldShowCoachHints()) {
-    box.classList.add("hidden");
-    box.innerHTML = "";
-    return;
-  }
-  box.classList.remove("hidden");
-  const sub = getSubSuggestion(S.myTeam, recOff);
-  const homeTip = S.myTeam === S.homeTeam
-    ? `${HOME_COURT_PROFILE[S.homeTeam].shortArena}声浪${crowdLevel()}，顺风会放大一波流，但连续打铁也会焦躁。`
-    : `客场面对${HOME_COURT_PROFILE[S.homeTeam].shortArena}声浪${crowdLevel()}，稳住第一传，暂停可压低噪音。`;
-  box.innerHTML =
-    `<div class="ca-title">📋 现在该做</div>` +
-    `<div class="ca-grid">` +
-      `<div class="ca-row"><div class="ca-k">进攻</div><div class="ca-v"><b>${OFF_SCHEMES[recOff].icon}${OFF_SCHEMES[recOff].name}</b> <span>— ${reasonOff(recOff, oppDef)}</span></div></div>` +
-      `<div class="ca-row"><div class="ca-k">防守</div><div class="ca-v"><b>${DEF_SCHEMES[recDef].icon}${DEF_SCHEMES[recDef].name}</b> <span>— ${reasonDef(recDef, oppOff)}</span></div></div>` +
-      `<div class="ca-row"><div class="ca-k">主场</div><div class="ca-v"><span>${homeTip}</span></div></div>` +
-      `<div class="ca-row"><div class="ca-k">轮换</div><div class="ca-v"><span>${sub}</span></div></div>` +
-    `</div>`;
+  box.classList.add("hidden");
+  box.innerHTML = "";
 }
 
 function renderCoachReadPanel() {
@@ -2381,7 +3354,6 @@ function renderCoachReadPanel() {
     panel.classList.add("hidden");
     return;
   }
-  panel.classList.remove("hidden");
   panel.dataset.aiSchemeFit = model.schemeFit || "";
   panel.dataset.aiSpacing = String(model.lineupFit?.spacing ?? "");
   panel.dataset.aiHandler = String(model.lineupFit?.handler ?? "");
@@ -2392,6 +3364,7 @@ function renderCoachReadPanel() {
   writeCoachReadRow("coach-read-lineup-fit", "阵容", model.lineup);
   writeCoachReadRow("coach-read-risk", "风险", model.risk);
   writeCoachReadRow("coach-read-suggestion", "建议", model.suggestion);
+  panel.classList.add("hidden");
 }
 
 function writeCoachReadRow(id, label, value) {
@@ -2405,13 +3378,21 @@ function setMyScheme(kind, key) {
   const prev = S.scheme[S.myTeam][kind];
   if (S.subWindow) {
     S.scheme[S.myTeam][kind] = key;
+    recordCommandDraft("scheme", {
+      kind,
+      from: prev,
+      to: key,
+      fromName: kind === "off" ? OFF_SCHEMES[prev]?.name : DEF_SCHEMES[prev]?.name,
+      toName: kind === "off" ? OFF_SCHEMES[key]?.name : DEF_SCHEMES[key]?.name,
+    });
     refreshLineupProfiles("setup-scheme-draft");
     renderCmd();
     assistantAfterScheme(kind, key);
     syncAiVerification(`scheme-draft:${kind}:${key}`);
     return;
   }
-  commitMySchemeChange(kind, key, prev, "scheme-change");
+  setCoachPrompt("timeout_required", "要完整调整战术，先在文字直播里叫暂停。", "btn-pause");
+  syncAiVerification(`scheme-locked:${kind}:${key}`);
 }
 
 function commitMySchemeChange(kind, key, prev, source = "scheme-change") {
@@ -2494,14 +3475,19 @@ function renderMorale() {
 function renderSubs() {
   const my = S.myTeam;
   const court = $("sub-court"), bench = $("sub-bench");
-  court.innerHTML = ""; bench.innerHTML = "";
-  onCourtArr(my).forEach((p) => court.appendChild(playerChip(p, true)));
-  benchArr(my).forEach((p) => bench.appendChild(playerChip(p, false)));
+  if (court && bench) {
+    court.innerHTML = ""; bench.innerHTML = "";
+    onCourtArr(my).forEach((p) => court.appendChild(playerChip(p, true)));
+    benchArr(my).forEach((p) => bench.appendChild(playerChip(p, false)));
+  }
   const adviceEl = $("sub-advice");
   if (adviceEl) {
     const showHints = shouldShowCoachHints();
-    adviceEl.classList.toggle("muted", !showHints);
-    adviceEl.innerHTML = showHints
+    const changes = lineupChangePairs();
+    adviceEl.classList.toggle("muted", !showHints && !changes.length);
+    adviceEl.innerHTML = changes.length
+      ? `✅ 已更新最终轮换：${changes.map(({ inP, outP }) => `${inP.name}上，${outP.name}下`).join("；")}`
+      : showHints
       ? `💡 ${getSubSuggestion(my, bestCounterOff(S.scheme[S.oppTeam].def))}`
       : "助教提示关闭：暂停或节间时可自主安排轮换。";
   }
@@ -2515,6 +3501,7 @@ function renderSubs() {
       ? `已选中 ${ROSTERS[my].players.find((x) => x.id === S.subSel.id).name}，点击替补完成换人`
       : "点击场上球员→再点替补，即可换人";
   }
+  renderCommandFinalPlan();
 }
 
 function playerStatusTag(p, onCourt) {
@@ -2563,7 +3550,7 @@ function onChipClick(p, onCourt) {
     if (S.assistantStep === ASSISTANT_STEPS.SUB_OUT) {
       if (!onCourt || p.id !== S.assistantSubPlan.outId) { focusCoachArea(currentAssistantTargetId() || "sub-court"); return; }
       S.subSel = { team: my, id: p.id };
-      renderSubs();
+      renderCmd();
       showAssistantStep(ASSISTANT_STEPS.SUB_IN);
       return;
     }
@@ -2572,7 +3559,7 @@ function onChipClick(p, onCourt) {
       S.subSel = { team: my, id: S.assistantSubPlan.outId };
       applySub(my, S.assistantSubPlan.outId, S.assistantSubPlan.inId, true);
       S.subSel = null;
-      renderSubs();
+      renderCmd();
       return;
     }
   }
@@ -2588,7 +3575,7 @@ function onChipClick(p, onCourt) {
       applySub(my, tired.id, p.id, true);
     }
   }
-  renderSubs();
+  renderCmd();
 }
 
 function updateStaminaBars() {
@@ -3062,10 +4049,127 @@ function renderCoachGrade(iWon) {
     `</div>`;
 }
 
+function commandAdviceForSession(session) {
+  const plan = session?.committedPlan || null;
+  const reads = session?.staffBriefing?.reads || [];
+  return reads.find((read) => read.adviceId === plan?.adoptedAdviceId) || null;
+}
+
+function commandDecisionText(session, advice) {
+  const plan = session?.committedPlan || null;
+  if (advice) return staffAdviceSummary(advice);
+  const parts = [];
+  (plan?.schemeChanges || []).forEach((change) => {
+    parts.push(`${change.kind === "off" ? "进攻" : "防守"}改为【${change.toName}】`);
+  });
+  if (plan?.lineupChanges?.length) {
+    parts.push(`换人：${plan.lineupChanges.map((change) => `${change.inName}上、${change.outName}下`).join("；")}`);
+  }
+  return parts.join("；") || "保留现有方案";
+}
+
+function commandResolvedWindow(plan) {
+  return (S.tactical?.resolvedAdjustmentWindows || []).find((win) => win.adjustmentId === plan?.adjustmentId) || null;
+}
+
+function commandResultText(result) {
+  if (result === "success") return "这次取舍被直播验证，方案打出了预期收益。";
+  if (result === "partial") return "这次取舍有一部分兑现，但代价也开始影响场面。";
+  if (result === "failed") return "这次取舍没有解决根本问题，后续需要再调整。";
+  return "后续反馈还不完整，先保留为下场观察点。";
+}
+
+function buildPostgameRecapItems(limit = 2) {
+  const sessions = (S.commandHistory || []).filter((session) => session?.committedPlan);
+  const items = sessions.map((session, index) => {
+    const plan = session.committedPlan;
+    const advice = commandAdviceForSession(session);
+    const resolved = commandResolvedWindow(plan);
+    const feedbackRows = Array.isArray(session.feedbackRows) ? session.feedbackRows : [];
+    const watchFor = (plan.watchFor?.length ? plan.watchFor : advice?.watchFor || []).slice(0, 3);
+    const lessonId = plan.lessonId || lessonIdForAdvice(advice);
+    const result = resolved?.result || (feedbackRows.length ? "partial" : "pending");
+    const feedbackText = feedbackRows.slice(-1)[0]?.text || commandResultText(result);
+    const score = (plan.acceptedCost ? 4 : 0) + (feedbackRows.length ? 3 : 0) +
+      (resolved ? 3 : 0) + (lessonId ? 1 : 0) + (session.by === S.myTeam ? 1 : 0);
+    return {
+      id: session.id,
+      openedAt: session.openedAt || {},
+      openedTick: session.openedAt?.tick ?? index,
+      problem: session.staffBriefing?.primaryProblemText || session.reasonText || "这次暂停处理了一段场上问题。",
+      primaryProblem: session.staffBriefing?.primaryProblem || "",
+      decision: commandDecisionText(session, advice),
+      adoptedAdviceId: plan.adoptedAdviceId || "",
+      staffRole: advice ? roleLabel(advice.role) : "",
+      acceptedCost: plan.acceptedCost || "",
+      acceptedCostText: plan.acceptedCostText || (plan.acceptedCost ? costLabel(plan.acceptedCost) : "未记录代价"),
+      watchFor,
+      watchForText: watchFor.map(watchForLabel).join("；") || "下次继续看执行质量",
+      result,
+      resultText: commandResultText(result),
+      feedbackText,
+      lessonId,
+      lessonTitle: lessonId ? TACTIC_LESSONS[lessonId]?.title || "" : "",
+      coachActionId: plan.coachActionId || "",
+      adjustmentId: plan.adjustmentId || "",
+      summaryLivecastId: plan.livecastId || "",
+      sourceLivecastIds: session.sourceLivecastIds || [],
+      sourceContextIds: session.sourceContextIds || [],
+      feedbackLivecastIds: feedbackRows.map((row) => row.livecastId).filter(Boolean),
+      score,
+    };
+  }).filter((item) => item.acceptedCost || item.feedbackLivecastIds.length || item.adoptedAdviceId);
+
+  const selected = items
+    .sort((a, b) => b.score - a.score || b.openedTick - a.openedTick)
+    .slice(0, limit)
+    .sort((a, b) => a.openedTick - b.openedTick)
+    .map(({ score, ...item }) => item);
+  S.postgameRecap = selected;
+  return selected;
+}
+
+function renderPostCoachRecap() {
+  const box = $("post-coach-recap");
+  if (!box) return;
+  const items = buildPostgameRecapItems(2);
+  if (!items.length) {
+    box.classList.add("hidden");
+    box.innerHTML = "";
+    return;
+  }
+  box.classList.remove("hidden");
+  box.innerHTML =
+    `<div class="post-recap-title">教练组复盘</div>` +
+    items.map((item, idx) => {
+      const lessonButton = item.lessonId
+        ? `<button class="post-recap-lesson" data-testid="post-recap-lesson" data-lesson-id="${item.lessonId}" type="button">看战术板</button>`
+        : "";
+      return `<div class="post-recap-item" data-testid="post-recap-item"` +
+        ` data-ai-command-session-id="${item.id}"` +
+        ` data-ai-coach-action-id="${item.coachActionId}"` +
+        ` data-ai-adjustment-id="${item.adjustmentId}"` +
+        ` data-ai-adopted-advice-id="${item.adoptedAdviceId}"` +
+        ` data-ai-accepted-cost="${item.acceptedCost}"` +
+        ` data-ai-lesson-id="${item.lessonId}"` +
+        ` data-ai-result="${item.result}">` +
+          `<div class="post-recap-head"><b>${idx + 1}. ${item.problem}</b><span>${item.result === "success" ? "兑现" : item.result === "failed" ? "付账" : "待复看"}</span></div>` +
+          `<div class="post-recap-line">你选择：${item.decision}</div>` +
+          `<div class="post-recap-line">接受代价：${item.acceptedCostText}</div>` +
+          `<div class="post-recap-feedback">${item.feedbackText}</div>` +
+          `<div class="post-recap-foot"><span>下次观察：${item.watchForText}</span>${lessonButton}</div>` +
+        `</div>`;
+    }).join("");
+  box.querySelectorAll(".post-recap-lesson").forEach((btn) => {
+    btn.onclick = () => openTacticLesson(btn.dataset.lessonId, "postgame-recap");
+  });
+}
+
 // ----------------- 单场结束 → 系列赛结算 -----------------
 function endGame() {
   S.gameOver = true;
   S.running = false;
+  S.phase = "postgame";
   clearTimeout(S.timer);
 
   const my = S.score[S.myTeam], opp = S.score[S.oppTeam];
@@ -3103,6 +4207,12 @@ function hidePostGamePanel() {
   if (p) p.classList.add("hidden");
   const g = $("post-coach-grade");
   if (g) g.classList.add("hidden");
+  const recap = $("post-coach-recap");
+  if (recap) {
+    recap.classList.add("hidden");
+    recap.innerHTML = "";
+  }
+  S.postgameRecap = [];
 }
 
 function showPostGamePanel(seriesEnd, iWon) {
@@ -3125,8 +4235,12 @@ function showPostGamePanel(seriesEnd, iWon) {
     $("post-btn-restart").classList.add("hidden");
   }
   renderCoachGrade(iWon);
+  renderPostCoachRecap();
   showScreen("game");
   updateScoreboard();
+  syncAiVerification("postgame:panel");
+  requestAnimationFrame(() => syncAiVerification("postgame:panel-visible"));
+  setTimeout(() => syncAiVerification("postgame:panel-visible"), 120);
 }
 
 function afterGameNext() { hidePostGamePanel(); S.gameNo++; enterSeries(); }

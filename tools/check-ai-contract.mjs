@@ -33,6 +33,7 @@ record("entry.live_html.present", html.includes('data-testid="app-root"'), "live
 record("entry.index_html.removed", !(await fileExists(path.join(root, "index.html"))), "index.html is not an app entry.");
 record("entry.module_script", html.includes('type="module"') && html.includes("src/live-sim.mjs"), "live.html loads the module entry.");
 record("entry.state_json_node", html.includes(`id="${AI_VERIFY_CONTRACT.stateScriptId}"`) && html.includes('type="application/json"'), "JSON snapshot node exists.");
+record("entry.no_command_tab", !html.includes('data-testid="tab-command"'), "Command is not exposed as a persistent tab in live.html.");
 
 const missingRequired = includesAll(
   html,
@@ -45,6 +46,12 @@ record("verify.global.installed", aiVerify.includes(AI_VERIFY_CONTRACT.globalNam
 record("verify.contract_global", aiVerify.includes("getContract"), "Browser global exposes getContract().");
 record("verify.seed_support", aiVerify.includes("ai_seed") && aiVerify.includes("Math.random = seeded"), "Deterministic seed support is wired.");
 record("verify.assertions", aiVerify.includes("getAssertions") && aiVerify.includes("getAssertSummary"), "Built-in assertions are exposed.");
+record("verify.command_phase_assertions", aiVerify.includes("live.no_command_tab") && aiVerify.includes("command.visible_only_during_window") && aiVerify.includes("command.phase_matches_window"), "Command phase assertions are wired.");
+record("verify.command_ui_snapshot", aiVerify.includes("commandUi:") && aiVerify.includes("command.compact_by_default") && aiVerify.includes("command.final_plan.present") && aiVerify.includes("command.recommendations_hidden_without_help") && aiVerify.includes("firstScreenFits") && aiVerify.includes("commandLineupSignals"), "Compact command UI snapshot and assertions are wired.");
+record("verify.command_staff_snapshot", aiVerify.includes("commandStaff:") && aiVerify.includes("commandStaffSignals") && aiVerify.includes("staff.visible_reads.each_has_cost"), "Coach staff problem/read/cost snapshot and assertions are wired.");
+record("verify.command_commit_snapshot", aiVerify.includes("commandCommitSignals") && aiVerify.includes("command.commit_summary.single") && aiVerify.includes("command.commit_summary.no_draft_spam") && aiVerify.includes("command.commit.accepted_cost.present") && aiVerify.includes("command.feedback.references_accepted_cost"), "Command commit summary, accepted cost, feedback, and no-spam assertions are wired.");
+record("verify.tactic_lesson_snapshot", aiVerify.includes("tacticLessons:") && aiVerify.includes("tacticLessonSignals") && aiVerify.includes("lesson.frame_count_minimum") && tacticalData.includes("TACTIC_LESSONS"), "Tactic lesson snapshot, assertions, and data are wired.");
+record("verify.postgame_recap_snapshot", aiVerify.includes("postgameRecapSignals") && aiVerify.includes("postgame.recap.traceable_when_present") && liveSim.includes("renderPostCoachRecap"), "Postgame coach recap snapshot and assertions are wired.");
 record("verify.json_sync", aiVerify.includes("textContent = JSON.stringify(snapshot)"), "Snapshot is written to JSON node.");
 record("verify.tactical_snapshot", aiVerify.includes("compactTacticalState") && aiVerify.includes("tactical,"), "Snapshot includes compact tactical state.");
 
@@ -64,7 +71,15 @@ const generatedSignals = [
   "dataset.aiLivecastId",
   "dataset.aiContextId",
   "dataset.aiCauseIds",
+  "dataset.aiCommandSessionId",
+  "dataset.aiAdoptedAdviceId",
+  "dataset.aiAcceptedCost",
+  "dataset.aiLessonId",
+  "dataset.aiFeedbackKind",
   '`scheme-${kind}-${key}`',
+  '`lesson-open-${lesson.lessonId}`',
+  '"post-recap-item"',
+  '"post-recap-lesson"',
   '"player-court"',
   '"player-bench"',
   "${p.id}",

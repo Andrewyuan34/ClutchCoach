@@ -1,12 +1,12 @@
-import { ROSTERS, OFF_SCHEMES, DEF_SCHEMES, MATCHUP } from "./data/commentary-data.mjs";
+import { ROSTERS, OFF_SCHEMES, DEF_SCHEMES, MATCHUP } from "./data/commentary-data.mjs?v=coach-recap-28";
 import {
   ADAPTATION_RULES,
   CAUSE_TEMPLATES,
   SCHEME_REQUIREMENTS,
   TACTICAL_TRAITS,
   TRAIT_KEYS,
-} from "./data/tactical-data.mjs";
-import { S } from "./state.mjs";
+} from "./data/tactical-data.mjs?v=coach-recap-28";
+import { S } from "./state.mjs?v=coach-recap-28";
 
 const HISTORY_LIMIT = 12;
 const TRACE_LIMIT = 40;
@@ -109,6 +109,10 @@ export function createAdjustmentWindow(action, options = {}) {
     label: options.label || actionLabel(action),
     targetProblem: options.targetProblem || "read_game",
     expectedCauseIds,
+    adoptedAdviceId: options.adoptedAdviceId || action?.payload?.adoptedAdviceId || "",
+    acceptedCost: options.acceptedCost || action?.payload?.acceptedCost || "",
+    watchFor: clone(options.watchFor || action?.payload?.watchFor || []),
+    lessonId: options.lessonId || action?.payload?.lessonId || "",
     startPossessionId: t.lastContext ? t.lastContext.possessionId : null,
     remainingPossessions: options.remainingPossessions || 5,
     metrics: {
@@ -248,6 +252,12 @@ export function registerLivecastTrace(team, text, opt = {}) {
     coachActionId: base.coachActionId || coachActionIdForAdjustment(t, adjustmentId),
     adjustmentId,
     adaptationId: base.adaptationId || "",
+    commandSessionId: base.commandSessionId || "",
+    adoptedAdviceId: base.adoptedAdviceId || "",
+    acceptedCost: base.acceptedCost || "",
+    watchFor: clone(base.watchFor || []),
+    lessonId: base.lessonId || "",
+    feedbackKind: base.feedbackKind || "",
     source: opt.source || base.source || "livecast",
   };
   pushLimited(t.livecastTrace, trace, TRACE_LIMIT);
@@ -391,6 +401,11 @@ function updateAdjustmentWindows(context, outcome) {
         adjustmentId: win.adjustmentId,
         coachActionId: win.sourceActionId,
         causeIds: [win.result === "failed" ? "cause.coach.adjustment_failed" : "cause.coach.adjustment_success"],
+        adoptedAdviceId: win.adoptedAdviceId || "",
+        acceptedCost: win.acceptedCost || "",
+        watchFor: clone(win.watchFor || []),
+        lessonId: win.lessonId || "",
+        feedbackKind: win.result === "failed" ? "cost_triggered" : "execution_seen",
         source: "adjustment",
       },
     });
@@ -544,6 +559,11 @@ function compactAdjustment(win) {
     sourceActionId: win.sourceActionId,
     type: win.type,
     label: win.label,
+    targetProblem: win.targetProblem,
+    adoptedAdviceId: win.adoptedAdviceId || "",
+    acceptedCost: win.acceptedCost || "",
+    watchFor: clone(win.watchFor || []),
+    lessonId: win.lessonId || "",
     expectedCauseIds: win.expectedCauseIds,
     remainingPossessions: win.remainingPossessions,
     result: win.result,

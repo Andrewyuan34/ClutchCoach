@@ -1,6 +1,7 @@
-import { ROSTERS } from "./data/commentary-data.mjs";
-import { S } from "./state.mjs";
-import { compactTacticalState } from "./tactical.mjs";
+import { ROSTERS } from "./data/commentary-data.mjs?v=coach-recap-28";
+import { TACTIC_LESSONS } from "./data/tactical-data.mjs?v=coach-recap-28";
+import { S } from "./state.mjs?v=coach-recap-28";
+import { compactTacticalState } from "./tactical.mjs?v=coach-recap-28";
 
 export const AI_VERIFY_CONTRACT = Object.freeze({
   protocol: "nba-live-ai-verification",
@@ -22,10 +23,34 @@ export const AI_VERIFY_CONTRACT = Object.freeze({
     "score-spurs",
     "game-clock",
     "game-feed",
+    "postgame-panel",
+    "post-coach-recap",
+    "view-tabs",
     "tab-feed",
-    "tab-command",
     "tab-box",
     "command-panel",
+    "command-topbar",
+    "command-continue",
+    "command-briefing",
+    "command-stage",
+    "command-reason",
+    "command-risk",
+    "command-recent",
+    "command-staff",
+    "command-staff-problem",
+    "command-staff-reads",
+    "command-final-plan",
+    "command-final-offense",
+    "command-final-defense",
+    "command-final-subs",
+    "command-final-cost",
+    "command-mode-bar",
+    "command-mode-tactics",
+    "command-mode-lineup",
+    "command-tactics-body",
+    "command-lineup-body",
+    "command-lineup-recommendations",
+    "command-lineup-full",
     "coach-help-toggle",
     "coach-read-panel",
     "coach-read-situation",
@@ -36,11 +61,24 @@ export const AI_VERIFY_CONTRACT = Object.freeze({
     "coach-intro-modal",
     "coach-intro-start",
     "coach-tutorial-modal",
+    "tactic-lesson-modal",
+    "tactic-lesson-title",
+    "tactic-lesson-intent",
+    "tactic-lesson-board",
+    "tactic-lesson-frame-text",
+    "tactic-lesson-tags",
+    "tactic-lesson-prev",
+    "tactic-lesson-next",
+    "tactic-lesson-autoplay",
+    "tactic-lesson-close",
     "ai-verification-state",
   ]),
   generatedTestIds: Object.freeze([
     "feed-row",
     "scheme-{kind}-{key}",
+    "lesson-open-{lessonId}",
+    "post-recap-item",
+    "post-recap-lesson",
     "player-court-{playerId}",
     "player-bench-{playerId}",
   ]),
@@ -104,6 +142,7 @@ export function syncAiVerification(eventName = "sync") {
   document.documentElement.dataset.aiVerify = "ready";
   document.body.dataset.aiScreen = snapshot.screen.active || "";
   document.body.dataset.aiView = snapshot.game.view || "";
+  document.body.dataset.aiPhase = snapshot.game.phase || "";
   document.body.dataset.aiScore = `${snapshot.game.score.knicks}-${snapshot.game.score.spurs}`;
   document.body.dataset.aiRunning = String(snapshot.game.running);
   document.body.dataset.aiTutorial = String(snapshot.tutorial.open);
@@ -147,6 +186,7 @@ function buildSnapshot() {
       running: !!S.running,
       gameOver: !!S.gameOver,
       view: S.view,
+      phase: S.phase || (S.subWindow ? "command" : "live"),
       subWindow: !!S.subWindow,
       timeouts: { ...S.timeouts },
       scheme: clone(S.scheme),
@@ -166,6 +206,49 @@ function buildSnapshot() {
       crisisPending: !!S.crisisPending,
       helpOpen: !!(S.coachHelpOpen || S.assistantMode),
     },
+    command: {
+      active: !!S.subWindow,
+      visible: isVisible(document.getElementById("cmd-wrap")) && !document.getElementById("cmd-wrap")?.classList.contains("hidden"),
+      sessionId: S.commandSession?.id || "",
+      reason: S.commandSession?.reason || "",
+      reasonText: S.commandSession?.reasonText || "",
+      by: S.commandSession?.by || "",
+      sourceContextIds: clone(S.commandSession?.sourceContextIds || []),
+      recentFeed: clone(S.commandSession?.recentFeed || []),
+      committed: !!S.commandSession?.committed,
+      lastCommitted: S.lastCommandSession ? clone(S.lastCommandSession) : null,
+      commit: commandCommitSignals(feedRows),
+    },
+    postgame: {
+      panelVisible: isVisible(document.getElementById("postgame-panel")) && !document.getElementById("postgame-panel")?.classList.contains("hidden"),
+      recap: postgameRecapSignals(),
+    },
+    commandStaff: commandStaffSignals(),
+    tacticLessons: tacticLessonSignals(),
+    commandUi: {
+      mode: S.commandUi?.mode || "",
+      compact: !(S.commandUi?.expandedOffense || S.commandUi?.expandedDefense || S.commandUi?.expandedLineup || S.commandUi?.expandedRecent),
+      expanded: {
+        recent: !!S.commandUi?.expandedRecent,
+        offense: !!S.commandUi?.expandedOffense,
+        defense: !!S.commandUi?.expandedDefense,
+        lineup: !!S.commandUi?.expandedLineup,
+      },
+      continueVisible: isVisible(document.getElementById("command-continue")),
+      finalPlan: {
+        offense: document.getElementById("command-final-offense")?.innerText.trim() || "",
+        defense: document.getElementById("command-final-defense")?.innerText.trim() || "",
+        subs: document.getElementById("command-final-subs")?.innerText.trim() || "",
+        cost: document.getElementById("command-final-cost")?.innerText.trim() || "",
+      },
+      visibleSchemeButtons: [...document.querySelectorAll("#my-off .sch-btn, #my-def .sch-btn")]
+        .filter(isVisible)
+        .map((el) => el.dataset.aiSchemeKey || el.id || ""),
+      recommendations: commandRecommendationSignals(),
+      lineup: commandLineupSignals(),
+      layout: commandPanelMetrics(),
+      fullLineupVisible: isVisible(document.getElementById("command-lineup-full")) && !document.getElementById("command-lineup-full")?.classList.contains("hidden"),
+    },
     dom: {
       title: document.title,
       url: location.href,
@@ -181,6 +264,11 @@ function buildSnapshot() {
         coachActionId: lastFeed.dataset.aiCoachActionId || "",
         adjustmentId: lastFeed.dataset.aiAdjustmentId || "",
         adaptationId: lastFeed.dataset.aiAdaptationId || "",
+        commandSessionId: lastFeed.dataset.aiCommandSessionId || "",
+        adoptedAdviceId: lastFeed.dataset.aiAdoptedAdviceId || "",
+        acceptedCost: lastFeed.dataset.aiAcceptedCost || "",
+        lessonId: lastFeed.dataset.aiLessonId || "",
+        feedbackKind: lastFeed.dataset.aiFeedbackKind || "",
         source: lastFeed.dataset.aiTraceSource || "",
       } : null,
       requiredTestIds: requiredTestIds().reduce((acc, id) => {
@@ -207,6 +295,25 @@ function buildAssertions() {
   const tactical = compactTacticalState();
   const selectedTeam = S.myTeam;
   const selectedProfile = selectedTeam ? tactical.lineupProfiles?.[selectedTeam] : null;
+  const commandPanel = document.querySelector('[data-testid="command-panel"]');
+  const commandVisible = !!commandPanel && isVisible(commandPanel) && !commandPanel.classList.contains("hidden");
+  const commandTab = document.querySelector('[data-testid="tab-command"]');
+  const continueVisible = isVisible(document.getElementById("command-continue"));
+  const hintsOpen = !!(S.coachHelpOpen || S.assistantMode);
+  const recSignals = commandRecommendationSignals();
+  const commitSignals = commandCommitSignals(feedRowEls);
+  const staffSignals = commandStaffSignals();
+  const lessonSignals = tacticLessonSignals();
+  const postgameSignals = postgameRecapSignals();
+  const hasCommittedTradeoff = (S.commandHistory || []).some((session) => !!session?.committedPlan?.acceptedCost);
+  const finalPlanText = [
+    document.getElementById("command-final-offense")?.innerText.trim() || "",
+    document.getElementById("command-final-defense")?.innerText.trim() || "",
+    document.getElementById("command-final-subs")?.innerText.trim() || "",
+    document.getElementById("command-final-cost")?.innerText.trim() || "",
+  ].join(" ");
+  const visibleSchemeButtons = [...document.querySelectorAll("#my-off .sch-btn, #my-def .sch-btn")].filter(isVisible).length;
+  const fullLineupVisible = isVisible(document.getElementById("command-lineup-full")) && !document.getElementById("command-lineup-full")?.classList.contains("hidden");
 
   return [
     {
@@ -245,11 +352,365 @@ function buildAssertions() {
       details: selectedTeam ? `Selected ${selectedTeam} profile present: ${!!selectedProfile}.` : "No selected team yet.",
     },
     {
+      id: "live.no_command_tab",
+      pass: !commandTab,
+      details: commandTab ? "Command tab is still present." : "Command is no longer exposed as a persistent tab.",
+    },
+    {
+      id: "command.hidden_during_live",
+      pass: !!S.subWindow || !commandVisible,
+      details: `subWindow=${!!S.subWindow}, commandVisible=${commandVisible}.`,
+    },
+    {
+      id: "command.visible_only_during_window",
+      pass: !commandVisible || !!S.subWindow,
+      details: `commandVisible=${commandVisible}, subWindow=${!!S.subWindow}.`,
+    },
+    {
+      id: "command.phase_matches_window",
+      pass: (S.phase || (S.subWindow ? "command" : "live")) === (S.subWindow ? "command" : "live") || !!S.gameOver,
+      details: `phase=${S.phase || ""}, subWindow=${!!S.subWindow}.`,
+    },
+    {
+      id: "command.first_screen_has_continue",
+      pass: !commandVisible || continueVisible,
+      details: `commandVisible=${commandVisible}, continueVisible=${continueVisible}.`,
+    },
+    {
+      id: "command.final_plan.present",
+      pass: !commandVisible || (finalPlanText.includes("进攻") && finalPlanText.includes("防守")),
+      details: finalPlanText || "Final plan text missing.",
+    },
+    {
+      id: "command.compact_by_default",
+      pass: !commandVisible || !!S.commandUi?.expandedOffense || !!S.commandUi?.expandedDefense || visibleSchemeButtons <= 8,
+      details: `visibleSchemeButtons=${visibleSchemeButtons}, expandedOffense=${!!S.commandUi?.expandedOffense}, expandedDefense=${!!S.commandUi?.expandedDefense}.`,
+    },
+    {
+      id: "command.full_lineup_collapsed_by_default",
+      pass: !commandVisible || !!S.commandUi?.expandedLineup || !fullLineupVisible,
+      details: `expandedLineup=${!!S.commandUi?.expandedLineup}, fullLineupVisible=${fullLineupVisible}.`,
+    },
+    {
+      id: "command.recommendations_hidden_without_help",
+      pass: !commandVisible || hintsOpen || (
+        recSignals.schemeBadgesVisible === 0 &&
+        !recSignals.summaryMentionsRecommendation &&
+        !recSignals.lineupRecommendationVisible
+      ),
+      details: `hintsOpen=${hintsOpen}, schemeBadgesVisible=${recSignals.schemeBadgesVisible}, summaryMentionsRecommendation=${recSignals.summaryMentionsRecommendation}, lineupRecommendationVisible=${recSignals.lineupRecommendationVisible}.`,
+    },
+    {
+      id: "staff.primary_problem.traceable",
+      pass: !commandVisible || !S.commandSession || staffSignals.sourceLivecastIds.length > 0 || staffSignals.sourceContextIds.length > 0 || (S.commandSession.recentFeed || []).length > 0,
+      details: `problem=${staffSignals.primaryProblem || "none"}, livecastSources=${staffSignals.sourceLivecastIds.length}, contextSources=${staffSignals.sourceContextIds.length}.`,
+    },
+    {
+      id: "staff.visible_reads.count_between_1_and_2",
+      pass: !commandVisible || !hintsOpen || (staffSignals.visibleReads >= 1 && staffSignals.visibleReads <= 2),
+      details: `hintsOpen=${hintsOpen}, visibleReads=${staffSignals.visibleReads}.`,
+    },
+    {
+      id: "staff.visible_reads.each_has_cost",
+      pass: !commandVisible || !hintsOpen || staffSignals.reads.every((read) => !!read.cost),
+      details: `costs=${staffSignals.reads.map((read) => read.cost || "missing").join(",") || "none"}.`,
+    },
+    {
+      id: "command.final_plan.accepted_cost_visible",
+      pass: !commandVisible || !staffSignals.adoptedAdviceId || (staffSignals.finalCostText && !staffSignals.finalCostText.includes("待拍板")),
+      details: `adoptedAdviceId=${staffSignals.adoptedAdviceId || "none"}, finalCost=${staffSignals.finalCostText || "none"}.`,
+    },
+    {
+      id: "command.commit_summary.single",
+      pass: !commitSignals.hasCommittedPlan || commitSignals.summaryRows === 1,
+      details: `hasCommittedPlan=${commitSignals.hasCommittedPlan}, summaryRows=${commitSignals.summaryRows}.`,
+    },
+    {
+      id: "command.commit_summary.traceable",
+      pass: !commitSignals.hasCommittedPlan || commitSignals.summaryTracePresent,
+      details: `coachActionId=${commitSignals.coachActionId || "none"}, summaryTracePresent=${commitSignals.summaryTracePresent}.`,
+    },
+    {
+      id: "command.commit_summary.no_draft_spam",
+      pass: !commitSignals.hasCommittedPlan || commitSignals.draftSpamRows === 0,
+      details: `draftSpamRows=${commitSignals.draftSpamRows}, draftCount=${commitSignals.draftCount}.`,
+    },
+    {
+      id: "command.commit.accepted_cost.present",
+      pass: !commitSignals.hasCommittedPlan || !commitSignals.adoptedAdviceId || !!commitSignals.acceptedCost,
+      details: `adoptedAdviceId=${commitSignals.adoptedAdviceId || "none"}, acceptedCost=${commitSignals.acceptedCost || "none"}.`,
+    },
+    {
+      id: "command.feedback.references_accepted_cost",
+      pass: !commitSignals.hasCommittedPlan || !commitSignals.acceptedCost || commitSignals.feedbackRows === 0 || commitSignals.feedbackReferencesAcceptedCost,
+      details: `acceptedCost=${commitSignals.acceptedCost || "none"}, feedbackRows=${commitSignals.feedbackRows}, references=${commitSignals.feedbackReferencesAcceptedCost}.`,
+    },
+    {
+      id: "command.feedback.explain_rows_lte_two",
+      pass: !commitSignals.hasCommittedPlan || !commitSignals.acceptedCost || commitSignals.feedbackRows <= 2,
+      details: `acceptedCost=${commitSignals.acceptedCost || "none"}, feedbackRows=${commitSignals.feedbackRows}.`,
+    },
+    {
+      id: "lesson.available.mvp_two",
+      pass: lessonSignals.available.includes("motion") && lessonSignals.available.includes("paint"),
+      details: `available=${lessonSignals.available.join(",")}.`,
+    },
+    {
+      id: "lesson.every_scheme_has_intent",
+      pass: lessonSignals.lessons.every((lesson) => !!lesson.intent),
+      details: `missing=${lessonSignals.lessons.filter((lesson) => !lesson.intent).map((lesson) => lesson.lessonId).join(",") || "none"}.`,
+    },
+    {
+      id: "lesson.every_scheme_has_risks",
+      pass: lessonSignals.lessons.every((lesson) => lesson.risks.length > 0),
+      details: `missing=${lessonSignals.lessons.filter((lesson) => !lesson.risks.length).map((lesson) => lesson.lessonId).join(",") || "none"}.`,
+    },
+    {
+      id: "lesson.frame_count_minimum",
+      pass: lessonSignals.lessons.every((lesson) => lesson.frameCount >= 3),
+      details: lessonSignals.lessons.map((lesson) => `${lesson.lessonId}:${lesson.frameCount}`).join(","),
+    },
+    {
+      id: "lesson.watchfor_used_by_feedback",
+      pass: !commitSignals.lessonId || lessonSignals.lessons.some((lesson) => lesson.lessonId === commitSignals.lessonId && commitSignals.watchFor.some((tag) => lesson.watchFor.includes(tag))),
+      details: `commitLesson=${commitSignals.lessonId || "none"}, watchFor=${commitSignals.watchFor.join(",") || "none"}.`,
+    },
+    {
+      id: "postgame.recap.entries_lte_two",
+      pass: !S.gameOver || postgameSignals.count <= 2,
+      details: `gameOver=${!!S.gameOver}, count=${postgameSignals.count}.`,
+    },
+    {
+      id: "postgame.recap.available_for_committed_tradeoff",
+      pass: !S.gameOver || !hasCommittedTradeoff || !postgameSignals.visible || postgameSignals.count >= 1,
+      details: `gameOver=${!!S.gameOver}, recapVisible=${postgameSignals.visible}, hasCommittedTradeoff=${hasCommittedTradeoff}, count=${postgameSignals.count}.`,
+    },
+    {
+      id: "postgame.recap.traceable_when_present",
+      pass: postgameSignals.items.every((item) => !!item.coachActionId && !!item.adjustmentId && !!item.acceptedCost && (!!item.summaryLivecastId || item.feedbackLivecastIds.length > 0 || item.sourceLivecastIds.length > 0)),
+      details: `items=${postgameSignals.items.map((item) => `${item.id}:${item.coachActionId || "no-ca"}/${item.adjustmentId || "no-adj"}/${item.acceptedCost || "no-cost"}`).join(",") || "none"}.`,
+    },
+    {
+      id: "postgame.recap.lesson_link_traceable",
+      pass: postgameSignals.items.every((item) => !item.lessonId || postgameSignals.lessonLinks.includes(item.lessonId)),
+      details: `itemLessons=${postgameSignals.items.map((item) => item.lessonId).filter(Boolean).join(",") || "none"}, links=${postgameSignals.lessonLinks.join(",") || "none"}.`,
+    },
+    {
       id: "testids.required.present",
       pass: missingTestIds.length === 0,
       details: missingTestIds.length ? `Missing: ${missingTestIds.join(", ")}` : "All required test ids present.",
     },
   ];
+}
+
+function commandRecommendationSignals() {
+  const schemeBadgesVisible = [...document.querySelectorAll(".sch-btn[data-ai-recommendation-visible='true']")]
+    .filter(isVisible).length;
+  const summaryMentionsRecommendation = [
+    document.getElementById("offense-summary"),
+    document.getElementById("defense-summary"),
+  ].some((el) => isVisible(el) && (el.innerText || "").includes("推荐"));
+  const lineupTitle = document.querySelector("#command-lineup-recommendations .lineup-rec-title");
+  const lineupRecommendationVisible = isVisible(lineupTitle) && (lineupTitle.innerText || "").includes("推荐");
+  return {
+    schemeBadgesVisible,
+    summaryMentionsRecommendation,
+    lineupRecommendationVisible,
+  };
+}
+
+function commandStaffSignals() {
+  const wrap = document.getElementById("command-staff");
+  const problemEl = document.getElementById("command-staff-problem");
+  const readEls = [...document.querySelectorAll("#command-staff-reads .staff-read[data-ai-advice-id]")];
+  const session = S.commandSession || null;
+  const last = S.lastCommandSession || null;
+  const briefing = session?.staffBriefing || last?.staffBriefing || null;
+  const finalCostText = document.getElementById("command-final-cost")?.innerText.trim() || "";
+  const inActiveCommand = !!session && isVisible(wrap);
+  const activeSessionAdvice = finalCostText && !finalCostText.includes("待拍板") ? (session?.adoptedAdviceId || "") : "";
+  const adoptedAdviceId = inActiveCommand ? activeSessionAdvice : (last?.committedPlan?.adoptedAdviceId || "");
+  return {
+    visible: isVisible(wrap),
+    primaryProblem: wrap?.dataset.aiPrimaryProblem || briefing?.primaryProblem || "",
+    primaryProblemText: problemEl?.innerText.trim() || briefing?.primaryProblemText || "",
+    sourceLivecastIds: clone(briefing?.sourceLivecastIds || session?.sourceLivecastIds || []),
+    sourceContextIds: clone(briefing?.sourceContextIds || session?.sourceContextIds || []),
+    visibleReads: Number(wrap?.dataset.aiVisibleReads || 0),
+    reads: readEls.map((el) => ({
+      adviceId: el.dataset.aiAdviceId || "",
+      role: el.dataset.aiRole || "",
+      cost: el.dataset.aiCost || "",
+      adopted: el.dataset.aiAdopted === "true",
+      aligned: el.dataset.aiAligned === "true",
+      text: (el.innerText || "").trim(),
+    })),
+    adoptedAdviceId,
+    acceptedCost: inActiveCommand ? (activeSessionAdvice ? (session?.acceptedCost || "") : "") : (last?.committedPlan?.acceptedCost || ""),
+    finalCostText,
+  };
+}
+
+function tacticLessonSignals() {
+  const modal = document.getElementById("tactic-lesson-modal");
+  const visible = isVisible(modal) && !modal?.classList.contains("hidden");
+  const openedLessonId = S.tacticLesson?.lessonId || (visible ? (modal?.dataset.aiLessonId || "") : "");
+  const current = openedLessonId ? TACTIC_LESSONS[openedLessonId] : null;
+  const frameIndex = Number(modal?.dataset.aiFrameIndex || S.tacticLesson?.frameIndex || 0);
+  const lessons = Object.values(TACTIC_LESSONS).map((lesson) => ({
+    lessonId: lesson.lessonId,
+    kind: lesson.kind,
+    key: lesson.key,
+    title: lesson.title,
+    intent: lesson.intent,
+    needs: clone(lesson.needs || []),
+    risks: clone(lesson.risks || []),
+    watchFor: clone(lesson.watchFor || []),
+    frameCount: lesson.frames?.length || 0,
+  }));
+  return {
+    available: lessons.map((lesson) => lesson.lessonId),
+    openedLessonId,
+    visible,
+    watched: clone(S.learnedTactics || {}),
+    currentLesson: current ? {
+      id: current.lessonId,
+      title: current.title,
+      frameIndex,
+      frameCount: current.frames.length,
+      frameLabel: current.frames[frameIndex]?.label || "",
+      needs: clone(current.needs || []),
+      risks: clone(current.risks || []),
+      watchFor: clone(current.watchFor || []),
+    } : null,
+    lessons,
+  };
+}
+
+function postgameRecapSignals() {
+  const wrap = document.getElementById("post-coach-recap");
+  const itemEls = [...document.querySelectorAll("#post-coach-recap .post-recap-item")];
+  const lessonLinks = [...document.querySelectorAll("#post-coach-recap .post-recap-lesson")]
+    .map((btn) => btn.dataset.lessonId || "")
+    .filter(Boolean);
+  const stateItems = clone(S.postgameRecap || []);
+  const items = itemEls.map((el) => {
+    const id = el.dataset.aiCommandSessionId || "";
+    const stateItem = stateItems.find((item) => item.id === id) || {};
+    return {
+      id,
+      coachActionId: el.dataset.aiCoachActionId || stateItem.coachActionId || "",
+      adjustmentId: el.dataset.aiAdjustmentId || stateItem.adjustmentId || "",
+      adoptedAdviceId: el.dataset.aiAdoptedAdviceId || stateItem.adoptedAdviceId || "",
+      acceptedCost: el.dataset.aiAcceptedCost || stateItem.acceptedCost || "",
+      lessonId: el.dataset.aiLessonId || stateItem.lessonId || "",
+      result: el.dataset.aiResult || stateItem.result || "",
+      summaryLivecastId: stateItem.summaryLivecastId || "",
+      sourceLivecastIds: clone(stateItem.sourceLivecastIds || []),
+      sourceContextIds: clone(stateItem.sourceContextIds || []),
+      feedbackLivecastIds: clone(stateItem.feedbackLivecastIds || []),
+      text: (el.innerText || "").trim(),
+    };
+  });
+  return {
+    visible: isVisible(wrap) && !wrap?.classList.contains("hidden"),
+    count: itemEls.length,
+    stateItems,
+    items,
+    lessonLinks,
+  };
+}
+
+function commandLineupSignals() {
+  const recBox = document.getElementById("command-lineup-recommendations");
+  const confirmed = recBox?.querySelector(".lineup-rec.confirmed") || null;
+  return {
+    confirmationVisible: isVisible(confirmed),
+    confirmationText: confirmed ? (confirmed.innerText || "").trim() : "",
+    applyVisible: isVisible(document.getElementById("command-lineup-apply")),
+  };
+}
+
+function commandPanelMetrics() {
+  const panel = document.getElementById("cmd-wrap");
+  if (!panel) return { clientHeight: 0, scrollHeight: 0, scrollTop: 0, firstScreenFits: false };
+  return {
+    clientHeight: panel.clientHeight || 0,
+    scrollHeight: panel.scrollHeight || 0,
+    scrollTop: panel.scrollTop || 0,
+    firstScreenFits: (panel.scrollHeight || 0) <= (panel.clientHeight || 0) + 1,
+  };
+}
+
+function commandCommitSignals(feedRowsArg = null) {
+  const rows = feedRowsArg ? [...feedRowsArg] : [...document.querySelectorAll("#feed .feed-row")];
+  const last = S.lastCommandSession || null;
+  const plan = last?.committedPlan || null;
+  const coachActionId = plan?.coachActionId || last?.commitTrace?.coachActionId || "";
+  const summaryLivecastId = plan?.livecastId || last?.commitTrace?.livecastId || "";
+  const acceptedCost = plan?.acceptedCost || last?.commitTrace?.acceptedCost || "";
+  const acceptedCostText = plan?.acceptedCostText || "";
+  const summaryRows = summaryLivecastId
+    ? rows.filter((row) => row.dataset.aiLivecastId === summaryLivecastId && (row.innerText || "").includes("最终布置"))
+    : [];
+  const logicalSummaryRows = summaryRows.length || (summaryLivecastId && plan?.summaryText ? 1 : 0);
+  const commitRows = coachActionId
+    ? rows.filter((row) => row.dataset.aiCoachActionId === coachActionId)
+    : [];
+  const feedbackRows = commitRows.filter((row) => {
+    const source = row.dataset.aiTraceSource || "";
+    const kind = row.dataset.aiFeedbackKind || "";
+    return kind !== "command_summary" && (kind || source === "command-feedback" || source === "adjustment");
+  });
+  const feedbackReferencesAcceptedCost = !acceptedCost || feedbackRows.some((row) => {
+    const text = row.innerText || "";
+    return row.dataset.aiAcceptedCost === acceptedCost || (!!acceptedCostText && text.includes(acceptedCostText));
+  });
+  const draftSpam = commandDraftSpamRows(rows, last?.drafts || []);
+  return {
+    hasLastCommitted: !!last?.committed,
+    hasCommittedPlan: !!plan,
+    coachActionId,
+    adjustmentId: plan?.adjustmentId || last?.commitTrace?.adjustmentId || "",
+    livecastId: summaryLivecastId,
+    adoptedAdviceId: plan?.adoptedAdviceId || "",
+    acceptedCost,
+    acceptedCostText,
+    watchFor: clone(plan?.watchFor || []),
+    lessonId: plan?.lessonId || last?.commitTrace?.lessonId || "",
+    summaryText: plan?.summaryText || "",
+    summaryRows: logicalSummaryRows,
+    commitRows: commitRows.length,
+    feedbackRows: feedbackRows.length,
+    feedbackKinds: feedbackRows.map((row) => row.dataset.aiFeedbackKind || row.dataset.aiTraceSource || ""),
+    feedbackReferencesAcceptedCost,
+    summaryTracePresent: summaryRows.some((row) => !!row.dataset.aiLivecastId && !!row.dataset.aiAdjustmentId) || (!!summaryLivecastId && !!(plan?.adjustmentId || last?.commitTrace?.adjustmentId)),
+    draftCount: Array.isArray(last?.drafts) ? last.drafts.length : 0,
+    draftSpamRows: draftSpam.length,
+    draftSpamText: draftSpam.slice(0, 3),
+  };
+}
+
+function commandDraftSpamRows(rows, drafts) {
+  if (!Array.isArray(drafts) || !drafts.length) return [];
+  const texts = rows.map((row) => row.innerText || "");
+  const hits = [];
+  drafts.forEach((draft) => {
+    const payload = draft.payload || {};
+    if (draft.type === "scheme" && payload.toName) {
+      const directSchemeText = [`我方改打【${payload.toName}】`, `防守切换【${payload.toName}】`, `教练调整：${payload.kind === "off" ? "进攻" : "防守"}切到【${payload.toName}】`];
+      texts.forEach((text) => {
+        if (directSchemeText.some((pattern) => text.includes(pattern))) hits.push(text);
+      });
+    }
+    if (draft.type === "substitution" && payload.inName && payload.outName) {
+      const subText = `换人：${payload.inName} 换下 ${payload.outName}`;
+      texts.forEach((text) => {
+        if (text.includes(subText)) hits.push(text);
+      });
+    }
+  });
+  return [...new Set(hits)];
 }
 
 function summarizeAssertions(assertions) {
@@ -327,8 +788,14 @@ function numberText(id) {
 }
 
 function isVisible(el) {
-  const style = getComputedStyle(el);
-  return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
+  if (!el) return false;
+  let cur = el;
+  while (cur && cur.nodeType === 1) {
+    const style = getComputedStyle(cur);
+    if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
+    cur = cur.parentElement;
+  }
+  return !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
 }
 
 function cssEscape(value) {

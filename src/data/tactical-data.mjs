@@ -54,6 +54,151 @@ export const SCHEME_REQUIREMENTS = Object.freeze({
   }),
 });
 
+export const TACTIC_LESSONS = Object.freeze({
+  motion: Object.freeze({
+    lessonId: "motion",
+    kind: "off",
+    key: "motion",
+    title: "团队传导",
+    intent: "破解夹击和收缩，靠第二处理点把球提前转到弱侧。",
+    needs: Object.freeze(["第二持球点", "空间点", "提前出球"]),
+    counters: Object.freeze(["double", "press", "paint"]),
+    risks: Object.freeze(["传导失误", "时间被压短", "弱侧射手被扑到"]),
+    watchFor: Object.freeze(["early_release", "weakside_open", "turnover_risk"]),
+    frames: Object.freeze([
+      Object.freeze({
+        label: "问题",
+        title: "强侧被压住",
+        text: "对手把球压在强侧，持球点如果原地等夹击，进攻会停住。",
+        focus: "先看球有没有被提前传出来。",
+        offense: Object.freeze([
+          { id: "handler", label: "1", x: 32, y: 58, ball: true },
+          { id: "outlet", label: "2", x: 48, y: 42 },
+          { id: "corner", label: "3", x: 82, y: 78 },
+          { id: "wing", label: "4", x: 72, y: 30 },
+        ]),
+        defense: Object.freeze([
+          { id: "trap1", label: "D", x: 34, y: 51 },
+          { id: "trap2", label: "D", x: 41, y: 64 },
+          { id: "low", label: "D", x: 68, y: 70 },
+        ]),
+        arrows: Object.freeze([
+          { from: [32, 58], to: [48, 42], label: "出球" },
+        ]),
+      }),
+      Object.freeze({
+        label: "解法",
+        title: "第二处理点接应",
+        text: "中路接应点上提，球不在夹击里停留，弱侧防守必须开始轮转。",
+        focus: "观察第二持球点是否能顺手转移。",
+        offense: Object.freeze([
+          { id: "handler", label: "1", x: 32, y: 58 },
+          { id: "outlet", label: "2", x: 50, y: 42, ball: true },
+          { id: "corner", label: "3", x: 84, y: 78 },
+          { id: "wing", label: "4", x: 74, y: 30 },
+        ]),
+        defense: Object.freeze([
+          { id: "trap1", label: "D", x: 36, y: 54 },
+          { id: "help", label: "D", x: 60, y: 46 },
+          { id: "low", label: "D", x: 70, y: 68 },
+        ]),
+        arrows: Object.freeze([
+          { from: [50, 42], to: [84, 78], label: "弱侧" },
+        ]),
+      }),
+      Object.freeze({
+        label: "代价",
+        title: "传导慢了就会失误",
+        text: "多传一次能制造空位，但如果接应点不稳，对手会赌传球路线。",
+        focus: "后续直播看提前出球和失误风险。",
+        offense: Object.freeze([
+          { id: "outlet", label: "2", x: 50, y: 42, ball: true },
+          { id: "corner", label: "3", x: 84, y: 78 },
+          { id: "wing", label: "4", x: 74, y: 30 },
+        ]),
+        defense: Object.freeze([
+          { id: "deny", label: "D", x: 62, y: 54 },
+          { id: "jump", label: "D", x: 72, y: 66 },
+          { id: "close", label: "D", x: 80, y: 42 },
+        ]),
+        arrows: Object.freeze([
+          { from: [50, 42], to: [84, 78], label: "风险" },
+        ]),
+      }),
+    ]),
+  }),
+  paint: Object.freeze({
+    lessonId: "paint",
+    kind: "def",
+    key: "paint",
+    title: "收缩护框",
+    intent: "把突破和空接赶出禁区，但会让弱侧底角更难兼顾。",
+    needs: Object.freeze(["护框高度", "篮板保护", "弱侧轮转"]),
+    counters: Object.freeze(["inside", "pace", "iso"]),
+    risks: Object.freeze(["底角三分", "长篮板", "弱侧补位慢"]),
+    watchFor: Object.freeze(["paint_touch_denied", "corner_three_allowed", "rebound_risk"]),
+    frames: Object.freeze([
+      Object.freeze({
+        label: "问题",
+        title: "禁区被连续冲击",
+        text: "对手的第一目标是把球送到篮下，护框人如果站得太散会被直接打穿。",
+        focus: "先看对手有没有轻松碰到篮筐附近。",
+        offense: Object.freeze([
+          { id: "drive", label: "1", x: 42, y: 66, ball: true },
+          { id: "roller", label: "5", x: 50, y: 30 },
+          { id: "corner", label: "3", x: 84, y: 78 },
+        ]),
+        defense: Object.freeze([
+          { id: "poa", label: "D", x: 42, y: 58 },
+          { id: "rim", label: "D", x: 51, y: 40 },
+          { id: "weak", label: "D", x: 72, y: 67 },
+        ]),
+        arrows: Object.freeze([
+          { from: [42, 66], to: [50, 30], label: "冲框" },
+        ]),
+      }),
+      Object.freeze({
+        label: "解法",
+        title: "三人收进油漆区",
+        text: "外线先放一步，弱侧和中锋都往篮下收，目标是把突破变成高难度终结。",
+        focus: "观察禁区触球是否被压低。",
+        offense: Object.freeze([
+          { id: "drive", label: "1", x: 45, y: 54, ball: true },
+          { id: "roller", label: "5", x: 52, y: 30 },
+          { id: "corner", label: "3", x: 84, y: 78 },
+        ]),
+        defense: Object.freeze([
+          { id: "poa", label: "D", x: 45, y: 48 },
+          { id: "rim", label: "D", x: 52, y: 38 },
+          { id: "weak", label: "D", x: 61, y: 58 },
+        ]),
+        arrows: Object.freeze([
+          { from: [72, 67], to: [61, 58], label: "收缩" },
+        ]),
+      }),
+      Object.freeze({
+        label: "代价",
+        title: "底角会被放出来",
+        text: "禁区守住了，代价是弱侧底角会短暂空出来，对手一旦转移快就能惩罚。",
+        focus: "后续直播看底角三分和长篮板。",
+        offense: Object.freeze([
+          { id: "drive", label: "1", x: 51, y: 48, ball: true },
+          { id: "corner", label: "3", x: 86, y: 79 },
+          { id: "wing", label: "4", x: 76, y: 35 },
+        ]),
+        defense: Object.freeze([
+          { id: "poa", label: "D", x: 50, y: 43 },
+          { id: "rim", label: "D", x: 53, y: 36 },
+          { id: "weak", label: "D", x: 61, y: 58 },
+        ]),
+        arrows: Object.freeze([
+          { from: [51, 48], to: [86, 79], label: "底角" },
+        ]),
+      }),
+    ]),
+  }),
+});
+
 export const CAUSE_TEMPLATES = Object.freeze({
   "cause.scheme.counter": [
     "这次不是单纯打进，{OFF_SCHEME} 正好打在 {DEF_SCHEME} 的软肋上。",

@@ -64,10 +64,34 @@ game-quarter
 game-clock
 game-status
 game-feed
+postgame-panel
+post-coach-recap
+view-tabs
 tab-feed
-tab-command
 tab-box
 command-panel
+command-topbar
+command-continue
+command-briefing
+command-stage
+command-reason
+command-risk
+command-recent
+command-staff
+command-staff-problem
+command-staff-reads
+command-final-plan
+command-final-offense
+command-final-defense
+command-final-subs
+command-final-cost
+command-mode-bar
+command-mode-tactics
+command-mode-lineup
+command-tactics-body
+command-lineup-body
+command-lineup-recommendations
+command-lineup-full
 coach-help-toggle
 coach-read-panel
 coach-read-situation
@@ -80,6 +104,16 @@ pause-toggle
 coach-intro-modal
 coach-intro-start
 coach-tutorial-modal
+tactic-lesson-modal
+tactic-lesson-title
+tactic-lesson-intent
+tactic-lesson-board
+tactic-lesson-frame-text
+tactic-lesson-tags
+tactic-lesson-prev
+tactic-lesson-next
+tactic-lesson-autoplay
+tactic-lesson-close
 ai-verification-state
 ```
 
@@ -97,6 +131,10 @@ data-ai-cause-ids
 data-ai-coach-action-id
 data-ai-adjustment-id
 data-ai-adaptation-id
+data-ai-command-session-id
+data-ai-adopted-advice-id
+data-ai-accepted-cost
+data-ai-feedback-kind
 data-ai-trace-source
 ```
 
@@ -118,6 +156,18 @@ player-bench-mcbride
 - DOM score matches simulator state.
 - Feed row count stays within the pruning limit.
 - Every feed row has a livecast trace id.
+- The command panel is not exposed as a persistent tab.
+- The command panel is hidden during live play and visible only during the timeout/break command window.
+- The command panel has a visible continue action while open.
+- The compact command UI exposes a final plan summary.
+- The default command UI keeps full tactics and full lineup collapsed unless the player expands them.
+- Recommendations stay hidden during a command window unless assistant mode or `助教提示` is active.
+- Coach staff reads expose the current problem, 1-2 visible assistant reads when help is active, and a cost for every visible read.
+- If the player adopts a staff read, the final plan exposes the accepted cost before continuing.
+- A committed command window writes one traceable `最终布置` livecast summary instead of replaying every draft click.
+- A committed staff read carries `adoptedAdviceId`, `acceptedCost`, and follow-up feedback rows that can reference the accepted cost.
+- The tactic lesson MVP exposes `motion` and `paint`, each with intent, risks, watch points, and at least 3 frames.
+- If a committed tradeoff links to a tactic lesson, the committed `watchFor` tags overlap that lesson's `watchFor` tags.
 - Tactical state exists once the verifier is initialized.
 - Selected-team lineup profiles exist after a team/game is active.
 - Required `data-testid` anchors are present.
@@ -138,6 +188,114 @@ debugEvents
 ```
 
 This links coach actions, scheme changes, substitutions, clutch choices, opponent adaptations, and livecast rows through stable ids such as `coachActionId`, `adjustmentId`, `possessionId`, `contextId`, and `livecastId`.
+
+`getState().commandUi` contains the compact command-center UI state:
+
+```text
+mode
+compact
+expanded.recent
+expanded.offense
+expanded.defense
+expanded.lineup
+continueVisible
+finalPlan.offense
+finalPlan.defense
+finalPlan.subs
+finalPlan.cost
+visibleSchemeButtons
+recommendations.schemeBadgesVisible
+recommendations.summaryMentionsRecommendation
+recommendations.lineupRecommendationVisible
+lineup.confirmationVisible
+lineup.confirmationText
+lineup.applyVisible
+layout.clientHeight
+layout.scrollHeight
+layout.firstScreenFits
+fullLineupVisible
+```
+
+This lets an agent verify that the UI is visually compressed without losing the underlying decision data.
+
+`getState().commandStaff` summarizes the currently visible or last committed staff briefing:
+
+```text
+primaryProblem
+primaryProblemText
+sourceLivecastIds
+sourceContextIds
+visibleReads
+reads[].adviceId / role / cost / adopted / aligned
+adoptedAdviceId
+acceptedCost
+finalCostText
+```
+
+`getState().command.commit` contains the post-command commit audit:
+
+```text
+hasLastCommitted
+hasCommittedPlan
+coachActionId
+adjustmentId
+livecastId
+adoptedAdviceId
+acceptedCost
+acceptedCostText
+watchFor
+summaryText
+summaryRows
+commitRows
+feedbackRows
+feedbackKinds
+feedbackReferencesAcceptedCost
+summaryTracePresent
+draftCount
+draftSpamRows
+draftSpamText
+```
+
+This lets an agent verify that timeout-window choices remain drafts, the resumed livecast contains only the final command summary, and that summary remains linked to `coachActionId`, `adjustmentId`, and `livecastId` for later debugging.
+
+`getState().tacticLessons` contains the optional tactic-board learning layer:
+
+```text
+available
+openedLessonId
+visible
+watched
+currentLesson.id
+currentLesson.frameIndex
+currentLesson.frameCount
+currentLesson.needs
+currentLesson.risks
+currentLesson.watchFor
+lessons[].intent / risks / watchFor / frameCount
+```
+
+This verifies that tactic learning stays optional: no live-play modal is required, and no tactic receives a numeric boost from being watched.
+
+`getState().postgame.recap` contains the end-of-game coaching review:
+
+```text
+visible
+count
+items[].id
+items[].coachActionId
+items[].adjustmentId
+items[].adoptedAdviceId
+items[].acceptedCost
+items[].lessonId
+items[].result
+items[].summaryLivecastId
+items[].sourceLivecastIds
+items[].sourceContextIds
+items[].feedbackLivecastIds
+lessonLinks
+```
+
+This verifies that the final recap is not a detached summary. Every visible recap row is tied back to the command session, accepted tradeoff, adjustment window, and either original or follow-up livecast evidence.
 
 `getAssertSummary()` returns `{ pass, total, failed }` for quick CI-style checks.
 

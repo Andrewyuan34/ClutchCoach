@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
 <title>虎扑式文字直播 · 2026总决赛</title>
 <link rel="icon" href="data:," />
-<link rel="stylesheet" href="src/styles/live.css" />
+<link rel="stylesheet" href="src/styles/live.css?v=coach-recap-28" />
 </head>
 <body>
 <div id="app" data-testid="app-root">
@@ -58,10 +58,10 @@
     <div class="coach-task-bar hidden" id="coach-task-bar" data-testid="coach-task"><b id="coach-task-name">本场任务</b><span id="coach-task-desc">等待任命</span></div>
     <button class="coach-prompt hidden" id="coach-prompt" type="button" data-testid="coach-prompt">
       <span id="coach-prompt-text">该你出手了</span>
-      <b>进指挥台</b>
+      <b>叫暂停</b>
     </button>
 
-    <div class="postgame-panel hidden" id="postgame-panel">
+    <div class="postgame-panel hidden" id="postgame-panel" data-testid="postgame-panel">
       <div class="postgame-kicker" id="postgame-kicker">终场</div>
       <div class="postgame-main">
         <div class="postgame-copy">
@@ -70,6 +70,7 @@
           <div class="postgame-series" id="post-result-series"></div>
           <div class="postgame-mvp" id="post-result-mvp"></div>
           <div class="coach-grade hidden" id="post-coach-grade"></div>
+          <div class="post-coach-recap hidden" id="post-coach-recap" data-testid="post-coach-recap"></div>
         </div>
         <div class="postgame-actions">
           <button class="btn btn-primary" id="post-btn-next">下一场</button>
@@ -78,9 +79,8 @@
       </div>
     </div>
 
-    <div class="tabs">
+    <div class="tabs" id="view-tabs" data-testid="view-tabs">
       <button class="tab active" id="tab-feed" data-testid="tab-feed">📡 文字直播</button>
-      <button class="tab" id="tab-cmd" data-testid="tab-command">🎯 指挥台<span class="tab-alert" aria-hidden="true"></span></button>
       <button class="tab" id="tab-box" data-testid="tab-box">📊 实时数据</button>
     </div>
 
@@ -115,38 +115,87 @@
     </div>
 
     <div class="cmd-wrap hidden" id="cmd-wrap" data-testid="command-panel">
-      <div class="pause-countdown hidden" id="pause-countdown">
-        <div class="pc-label" id="pause-countdown-label">暂停布置时间</div>
-        <div class="pc-time" id="pause-countdown-time">20</div>
-        <div class="pc-tip">时间结束后自动回到文字直播继续比赛</div>
+      <div class="command-topbar" id="command-topbar" data-testid="command-topbar">
+        <div class="command-topbar-main">
+          <div class="command-topbar-title" id="command-topbar-title">暂停布置</div>
+          <div class="command-topbar-meta" id="command-topbar-meta">Q1 12:00 · 0-0</div>
+        </div>
+        <div class="command-topbar-actions">
+          <div class="pause-countdown hidden" id="pause-countdown">
+            <span class="pc-label" id="pause-countdown-label">布置</span>
+            <b class="pc-time" id="pause-countdown-time">20</b>
+          </div>
+          <button class="command-continue" id="command-continue" data-testid="command-continue" type="button">继续比赛</button>
+        </div>
       </div>
-      <div class="morale-box" id="morale-box"></div>
-      <div class="coach-help-bar" id="coach-help-bar">
-        <button class="coach-help-toggle" id="coach-help-toggle" data-testid="coach-help-toggle" type="button">助教提示</button>
-        <span id="coach-help-status">推荐默认隐藏，自己判断战术</span>
+
+      <div class="command-briefing" id="command-briefing" data-testid="command-briefing">
+        <div class="command-stage-head" id="command-stage-head" data-testid="command-stage">
+          <div class="command-kicker">暂停简报</div>
+          <div class="command-title" id="command-title">布置回合</div>
+          <div class="command-reason" id="command-reason" data-testid="command-reason">读懂刚才的问题，再决定怎么调整。</div>
+          <div class="command-risk" id="command-risk" data-testid="command-risk">风险会随局势刷新。</div>
+          <div class="command-recent" id="command-recent" data-testid="command-recent"></div>
+          <button class="command-link-btn" id="command-recent-toggle" data-testid="command-recent-toggle" type="button">展开复盘</button>
+        </div>
+        <div class="command-staff" id="command-staff" data-testid="command-staff">
+          <div class="command-staff-kicker">本次取舍</div>
+          <div class="command-staff-problem" id="command-staff-problem" data-testid="command-staff-problem">先看场上问题。</div>
+          <div class="command-staff-reads" id="command-staff-reads" data-testid="command-staff-reads"></div>
+        </div>
       </div>
-      <div class="coach-advice" id="coach-advice"></div>
-      <div class="coach-read-panel" id="coach-read-panel" data-testid="coach-read-panel">
-        <div class="coach-read-row" id="coach-read-situation" data-testid="coach-read-situation"></div>
-        <div class="coach-read-row" id="coach-read-scheme-fit" data-testid="coach-read-scheme-fit"></div>
-        <div class="coach-read-row" id="coach-read-lineup-fit" data-testid="coach-read-lineup-fit"></div>
-        <div class="coach-read-row" id="coach-read-risk" data-testid="coach-read-risk"></div>
-        <div class="coach-read-row" id="coach-read-suggestion" data-testid="coach-read-suggestion"></div>
+
+      <div class="command-final-plan" id="command-final-plan" data-testid="command-final-plan">
+        <div class="cfp-kicker">最终方案</div>
+        <div class="cfp-grid">
+          <div id="command-final-offense" data-testid="command-final-offense">进攻：-</div>
+          <div id="command-final-defense" data-testid="command-final-defense">防守：-</div>
+          <div id="command-final-subs" data-testid="command-final-subs">换人：暂无</div>
+          <div id="command-final-cost" data-testid="command-final-cost">代价：待拍板</div>
+        </div>
       </div>
-      <div class="intel" id="intel-box"></div>
 
-      <div class="cmd-sec-title">⚔️ 我方进攻战术</div>
-      <div class="sch-grid" id="my-off"></div>
+      <div class="command-mode-bar" id="command-mode-bar" data-testid="command-mode-bar">
+        <div class="command-mode-tabs">
+          <button class="command-mode active" id="command-mode-tactics" data-testid="command-mode-tactics" type="button">战术</button>
+          <button class="command-mode" id="command-mode-lineup" data-testid="command-mode-lineup" type="button">换人</button>
+        </div>
+        <div class="coach-help-bar" id="coach-help-bar">
+          <button class="coach-help-toggle" id="coach-help-toggle" data-testid="coach-help-toggle" type="button">助教提示</button>
+          <span id="coach-help-status">推荐默认隐藏，自己判断战术</span>
+        </div>
+      </div>
 
-      <div class="cmd-sec-title">🛡️ 我方防守战术</div>
-      <div class="sch-grid" id="my-def"></div>
+      <div class="command-mode-body" id="command-tactics-body" data-testid="command-tactics-body">
+        <div class="coach-advice" id="coach-advice"></div>
+        <div class="coach-read-panel" id="coach-read-panel" data-testid="coach-read-panel">
+          <div class="coach-read-row" id="coach-read-situation" data-testid="coach-read-situation"></div>
+          <div class="coach-read-row" id="coach-read-scheme-fit" data-testid="coach-read-scheme-fit"></div>
+          <div class="coach-read-row" id="coach-read-lineup-fit" data-testid="coach-read-lineup-fit"></div>
+          <div class="coach-read-row" id="coach-read-risk" data-testid="coach-read-risk"></div>
+          <div class="coach-read-row" id="coach-read-suggestion" data-testid="coach-read-suggestion"></div>
+        </div>
+        <div class="intel" id="intel-box"></div>
 
-      <div class="cmd-sec-title">🔁 轮换换人 <span class="sub-hint" id="sub-hint"></span></div>
-      <div class="sub-advice" id="sub-advice"></div>
-      <div class="sub-label">场上五人</div>
-      <div class="sub-grid" id="sub-court"></div>
-      <div class="sub-label">替补席</div>
-      <div class="sub-grid" id="sub-bench"></div>
+        <div class="cmd-sec-title">⚔️ 进攻战术 <span class="cmd-sec-sub" id="offense-summary"></span></div>
+        <div class="sch-grid command-sch-grid" id="my-off"></div>
+
+        <div class="cmd-sec-title">🛡️ 防守战术 <span class="cmd-sec-sub" id="defense-summary"></span></div>
+        <div class="sch-grid command-sch-grid" id="my-def"></div>
+      </div>
+
+      <div class="command-mode-body hidden" id="command-lineup-body" data-testid="command-lineup-body">
+        <div class="cmd-sec-title">🔁 轮换换人 <span class="sub-hint" id="sub-hint"></span></div>
+        <div class="sub-advice" id="sub-advice"></div>
+        <div class="lineup-recommendations" id="command-lineup-recommendations" data-testid="command-lineup-recommendations"></div>
+        <button class="command-link-btn" id="command-lineup-more" data-testid="command-lineup-more" type="button">查看完整阵容</button>
+        <div class="lineup-full hidden" id="command-lineup-full" data-testid="command-lineup-full">
+          <div class="sub-label">场上五人</div>
+          <div class="sub-grid" id="sub-court"></div>
+          <div class="sub-label">替补席</div>
+          <div class="sub-grid" id="sub-bench"></div>
+        </div>
+      </div>
     </div>
 
     <div class="controls">
@@ -196,6 +245,28 @@
 
 </div>
 
+<!-- 指挥台战术板 -->
+<div class="coach-modal tactic-lesson-modal hidden" id="tactic-lesson-modal" data-testid="tactic-lesson-modal">
+  <div class="coach-card tactic-lesson-card">
+    <div class="tactic-lesson-head">
+      <div>
+        <div class="coach-kicker">战术板</div>
+        <div class="coach-title" id="tactic-lesson-title" data-testid="tactic-lesson-title">战术学习</div>
+      </div>
+      <button class="tactic-lesson-close" id="tactic-lesson-close" data-testid="tactic-lesson-close" type="button">关闭</button>
+    </div>
+    <div class="tactic-lesson-intent" id="tactic-lesson-intent" data-testid="tactic-lesson-intent"></div>
+    <div class="tactic-board" id="tactic-lesson-board" data-testid="tactic-lesson-board"></div>
+    <div class="tactic-lesson-frame" id="tactic-lesson-frame-text" data-testid="tactic-lesson-frame-text"></div>
+    <div class="tactic-lesson-tags" id="tactic-lesson-tags" data-testid="tactic-lesson-tags"></div>
+    <div class="tactic-lesson-controls">
+      <button class="btn btn-ghost" id="tactic-lesson-prev" data-testid="tactic-lesson-prev" type="button">上一步</button>
+      <button class="btn btn-primary" id="tactic-lesson-next" data-testid="tactic-lesson-next" type="button">下一步</button>
+      <button class="btn btn-ghost" id="tactic-lesson-autoplay" data-testid="tactic-lesson-autoplay" type="button">自动播放</button>
+    </div>
+  </div>
+</div>
+
 <!-- 赛前任命卡 -->
 <div class="coach-modal hidden" id="coach-intro-modal" data-testid="coach-intro-modal">
   <div class="coach-card">
@@ -233,6 +304,6 @@
   <div class="clutch-sub" id="clutch-sub"></div>
 </div>
 <script type="application/json" id="ai-verification-state" data-testid="ai-verification-state">{}</script>
-<script type="module" src="src/live-sim.mjs"></script>
+<script type="module" src="src/live-sim.mjs?v=coach-recap-28"></script>
 </body>
 </html>
