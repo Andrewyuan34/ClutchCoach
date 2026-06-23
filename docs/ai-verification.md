@@ -165,9 +165,9 @@ player-bench-mcbride
 - If the player adopts a staff read, the final plan exposes the accepted cost before continuing.
 - A committed command window writes one traceable `最终布置` livecast summary instead of replaying every draft click.
 - A committed staff read carries `adoptedAdviceId`, `acceptedCost`, and follow-up feedback rows that can reference the accepted cost.
-- The tactic lesson board exposes `motion` and `paint` as pure five-player animation systems.
-- Each tactic lesson has exactly 5 rendered actors, 5 tracked actors, a `five-player-motion-v1` system id, timeline duration, ball motion, active arrows / zones, and a cost path that overlaps its `watchFor` tags.
-- When a tactic lesson modal is open, the rendered board must contain exactly 5 actor coordinates, a ball marker, and a scrubber synced to the timeline.
+- The tactic lesson board exposes `motion` and `paint` as pure 5v5 animation systems.
+- Each tactic lesson has exactly 10 rendered actors, 10 tracked actors, a `five-v-five-action-motion-v2` system id, 5 primary actors, 5 context actors, timeline duration, ball motion, active actions / zones, beat phase, action type list, cause tags, risk tags, and a cost path that overlaps its `watchFor` tags.
+- When a tactic lesson modal is open, the rendered board must contain exactly 10 actor coordinates, side counts of 5 offense / 5 defense, a ball marker, and a scrubber synced to the timeline.
 - If a committed tradeoff links to a tactic lesson, the committed `watchFor` tags overlap that lesson's `watchFor` tags.
 - Tactical state exists once the verifier is initialized.
 - Selected-team lineup profiles exist after a team/game is active.
@@ -181,28 +181,50 @@ player-bench-mcbride
 available
 openedLessonId
 visible
+currentLesson.system
 currentLesson.playheadMs
 currentLesson.durationMs
 currentLesson.actorCount
 currentLesson.pureAnimation
 currentLesson.personnel
+currentLesson.primaryPersonnel
+currentLesson.primarySide
 currentLesson.subject
 currentLesson.movingActorCount
 currentLesson.ballTransfers
+currentLesson.actionCount
+currentLesson.activeActions[]
+currentLesson.actionTypes[]
+currentLesson.beatPhase
+currentLesson.causeTags[]
+currentLesson.riskTags[]
 currentLesson.costPath
+currentLesson.board.sideCounts
+currentLesson.board.primaryActorCount
+currentLesson.board.contextActorCount
 currentLesson.board.actors[]
 currentLesson.board.ball
 currentLesson.board.activeArrows
+currentLesson.board.activeActions[]
+currentLesson.board.activeActionTypes[]
 currentLesson.board.activeZones
 currentLesson.motionProbe
 lessons[].timeline.system
+lessons[].timeline.actionCount
+lessons[].timeline.actionTypes
+lessons[].timeline.beatPhases
+lessons[].timeline.causeTags
+lessons[].timeline.riskTags
 lessons[].timeline.pureAnimation
 lessons[].timeline.personnel
+lessons[].timeline.primaryPersonnel
+lessons[].timeline.primarySide
+lessons[].timeline.sideCounts
 lessons[].timeline.trackedActorCount
 lessons[].timeline.maxActorTravel
 ```
 
-`currentLesson.board.actors[]` contains `id`, `side`, `role`, `x`, and `y`, read from the live DOM. `currentLesson.board.ball` contains the current holder or free-ball label plus position. This lets an agent drag `tactic-lesson-scrubber`, call `getState()` again, and prove the visible five-player board moved.
+`currentLesson.board.actors[]` contains `id`, `side`, `role`, `primary`, `x`, and `y`, read from the live DOM. `currentLesson.board.ball` contains the current holder or free-ball label plus position. This lets an agent drag `tactic-lesson-scrubber`, call `getState()` again, and prove the visible 5v5 board, ball, active actions, and beat phase moved together.
 
 For data-only checks, call:
 
@@ -306,12 +328,22 @@ openedLessonId
 visible
 watched
 currentLesson.id
+currentLesson.system
 currentLesson.pureAnimation
 currentLesson.personnel
+currentLesson.primaryPersonnel
+currentLesson.primarySide
 currentLesson.subject
+currentLesson.actionCount
+currentLesson.activeActions[]
+currentLesson.actionTypes[]
+currentLesson.beatPhase
 currentLesson.playheadMs
 currentLesson.durationMs
 currentLesson.board.actorCount
+currentLesson.board.sideCounts
+currentLesson.board.primaryActorCount
+currentLesson.board.contextActorCount
 currentLesson.board.actors[]
 currentLesson.board.ball
 currentLesson.needs

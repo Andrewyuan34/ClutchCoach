@@ -1,7 +1,15 @@
-import { ROSTERS } from "./data/commentary-data.mjs?v=five-motion-31";
-import { TACTIC_LESSONS } from "./data/tactical-data.mjs?v=five-motion-31";
-import { S } from "./state.mjs?v=five-motion-31";
-import { compactTacticalState } from "./tactical.mjs?v=five-motion-31";
+import { ROSTERS } from "./data/commentary-data.mjs?v=action-motion-33";
+import { S } from "./state.mjs?v=action-motion-33";
+import { compactTacticalState } from "./tactical.mjs?v=action-motion-33";
+import {
+  commandCommitSignals,
+  commandLineupSignals,
+  commandPanelMetrics,
+  commandRecommendationSignals,
+  commandStaffSignals,
+} from "./ai/command-signals.mjs?v=action-motion-33";
+import { postgameRecapSignals } from "./ai/postgame-signals.mjs?v=action-motion-33";
+import { sampleTacticLessonMotion, tacticLessonSignals } from "./ai/tactic-lesson-signals.mjs?v=action-motion-33";
 
 export const AI_VERIFY_CONTRACT = Object.freeze({
   protocol: "nba-live-ai-verification",
@@ -466,18 +474,33 @@ function buildAssertions() {
     },
     {
       id: "lesson.timeline.present",
-      pass: lessonSignals.lessons.every((lesson) => lesson.timeline.durationMs > 0 && lesson.timeline.actorCount === 5),
+      pass: lessonSignals.lessons.every((lesson) => lesson.timeline.durationMs > 0 && lesson.timeline.actorCount === 10),
       details: lessonSignals.lessons.map((lesson) => `${lesson.lessonId}:${lesson.timeline.durationMs}ms/${lesson.timeline.actorCount}actors`).join(","),
     },
     {
-      id: "lesson.timeline.pure_five_player_system",
-      pass: lessonSignals.lessons.every((lesson) => lesson.timeline.pureAnimation && lesson.timeline.personnel === 5 && lesson.timeline.subject && lesson.timeline.trackedActorCount === 5),
-      details: lessonSignals.lessons.map((lesson) => `${lesson.lessonId}:pure=${lesson.timeline.pureAnimation}/personnel=${lesson.timeline.personnel}/tracks=${lesson.timeline.trackedActorCount}/subject=${lesson.timeline.subject}`).join(","),
+      id: "lesson.timeline.five_v_five_system",
+      pass: lessonSignals.lessons.every((lesson) => lesson.timeline.system === "five-v-five-action-motion-v2" && lesson.timeline.pureAnimation && lesson.timeline.personnel === 10 && lesson.timeline.primaryPersonnel === 5 && lesson.timeline.trackedActorCount === 10),
+      details: lessonSignals.lessons.map((lesson) => `${lesson.lessonId}:system=${lesson.timeline.system}/pure=${lesson.timeline.pureAnimation}/personnel=${lesson.timeline.personnel}/primary=${lesson.timeline.primaryPersonnel}/tracks=${lesson.timeline.trackedActorCount}`).join(","),
+    },
+    {
+      id: "lesson.timeline.action_grammar",
+      pass: lessonSignals.lessons.every((lesson) => lesson.timeline.actionCount >= 8 && lesson.timeline.actionTypes.includes("pass") && lesson.timeline.actionTypes.some((type) => ["dribble", "cut", "roll", "handoff"].includes(type)) && lesson.timeline.actionTypes.some((type) => ["help", "recover", "closeout", "stunt"].includes(type))),
+      details: lessonSignals.lessons.map((lesson) => `${lesson.lessonId}:actions=${lesson.timeline.actionCount}/types=${lesson.timeline.actionTypes.join("|")}`).join(","),
+    },
+    {
+      id: "lesson.timeline.beat_causality",
+      pass: lessonSignals.lessons.every((lesson) => ["problem", "trigger", "solution", "reaction", "cost"].every((phase) => lesson.timeline.beatPhases.includes(phase)) && lesson.timeline.beatsWithActions === lesson.frameCount && lesson.timeline.riskTags.every((tag) => lesson.watchFor.includes(tag))),
+      details: lessonSignals.lessons.map((lesson) => `${lesson.lessonId}:phases=${lesson.timeline.beatPhases.join("|")}/beatsWithActions=${lesson.timeline.beatsWithActions}/${lesson.frameCount}/risks=${lesson.timeline.riskTags.join("|")}`).join(","),
+    },
+    {
+      id: "lesson.timeline.side_counts",
+      pass: lessonSignals.lessons.every((lesson) => lesson.timeline.sideCounts.offense === 5 && lesson.timeline.sideCounts.defense === 5 && lesson.timeline.primaryActorCount === 5 && lesson.timeline.contextActorCount === 5),
+      details: lessonSignals.lessons.map((lesson) => `${lesson.lessonId}:off=${lesson.timeline.sideCounts.offense}/def=${lesson.timeline.sideCounts.defense}/primary=${lesson.timeline.primaryActorCount}/context=${lesson.timeline.contextActorCount}`).join(","),
     },
     {
       id: "lesson.timeline.moving_actors",
-      pass: lessonSignals.lessons.every((lesson) => lesson.timeline.movingActorCount === 5),
-      details: lessonSignals.lessons.map((lesson) => `${lesson.lessonId}:${lesson.timeline.movingActorCount}`).join(","),
+      pass: lessonSignals.lessons.every((lesson) => lesson.timeline.primaryMovingActorCount === 5 && lesson.timeline.contextMovingActorCount === 5),
+      details: lessonSignals.lessons.map((lesson) => `${lesson.lessonId}:primary=${lesson.timeline.primaryMovingActorCount}/context=${lesson.timeline.contextMovingActorCount}`).join(","),
     },
     {
       id: "lesson.timeline.motion_distance",
@@ -497,14 +520,23 @@ function buildAssertions() {
     {
       id: "lesson.modal.renders_timeline",
       pass: !lessonSignals.visible || (
-        lessonSignals.currentLesson?.board.actorCount === 5 &&
+        lessonSignals.currentLesson?.board.actorCount === 10 &&
+        lessonSignals.currentLesson?.board.sideCounts.offense === 5 &&
+        lessonSignals.currentLesson?.board.sideCounts.defense === 5 &&
+        lessonSignals.currentLesson?.board.primaryActorCount === 5 &&
+        lessonSignals.currentLesson?.board.contextActorCount === 5 &&
         lessonSignals.currentLesson?.board.ballPresent &&
         lessonSignals.currentLesson?.board.scrubberMax >= lessonSignals.currentLesson?.durationMs &&
         lessonSignals.currentLesson?.board.pureAnimation &&
-        lessonSignals.currentLesson?.board.personnel === 5
+        lessonSignals.currentLesson?.board.personnel === 10 &&
+        lessonSignals.currentLesson?.system === "five-v-five-action-motion-v2" &&
+        lessonSignals.currentLesson?.actionCount >= 8 &&
+        lessonSignals.currentLesson?.activeActions.length >= 1 &&
+        lessonSignals.currentLesson?.beatPhase &&
+        lessonSignals.currentLesson?.board.activeActions.length >= 1
       ),
       details: lessonSignals.currentLesson
-        ? `visible=${lessonSignals.visible}, actors=${lessonSignals.currentLesson.board.actorCount}/${lessonSignals.currentLesson.actorCount}, ball=${lessonSignals.currentLesson.board.ballPresent}, scrubber=${lessonSignals.currentLesson.board.scrubberValue}/${lessonSignals.currentLesson.board.scrubberMax}, pure=${lessonSignals.currentLesson.board.pureAnimation}`
+        ? `visible=${lessonSignals.visible}, actors=${lessonSignals.currentLesson.board.actorCount}/${lessonSignals.currentLesson.actorCount}, off=${lessonSignals.currentLesson.board.sideCounts.offense}, def=${lessonSignals.currentLesson.board.sideCounts.defense}, ball=${lessonSignals.currentLesson.board.ballPresent}, scrubber=${lessonSignals.currentLesson.board.scrubberValue}/${lessonSignals.currentLesson.board.scrubberMax}, pure=${lessonSignals.currentLesson.board.pureAnimation}, phase=${lessonSignals.currentLesson.beatPhase}, active=${lessonSignals.currentLesson.activeActions.join("|")}`
         : `visible=${lessonSignals.visible}`,
     },
     {
@@ -538,345 +570,6 @@ function buildAssertions() {
       details: missingTestIds.length ? `Missing: ${missingTestIds.join(", ")}` : "All required test ids present.",
     },
   ];
-}
-
-function commandRecommendationSignals() {
-  const schemeBadgesVisible = [...document.querySelectorAll(".sch-btn[data-ai-recommendation-visible='true']")]
-    .filter(isVisible).length;
-  const summaryMentionsRecommendation = [
-    document.getElementById("offense-summary"),
-    document.getElementById("defense-summary"),
-  ].some((el) => isVisible(el) && (el.innerText || "").includes("推荐"));
-  const lineupTitle = document.querySelector("#command-lineup-recommendations .lineup-rec-title");
-  const lineupRecommendationVisible = isVisible(lineupTitle) && (lineupTitle.innerText || "").includes("推荐");
-  return {
-    schemeBadgesVisible,
-    summaryMentionsRecommendation,
-    lineupRecommendationVisible,
-  };
-}
-
-function commandStaffSignals() {
-  const wrap = document.getElementById("command-staff");
-  const problemEl = document.getElementById("command-staff-problem");
-  const readEls = [...document.querySelectorAll("#command-staff-reads .staff-read[data-ai-advice-id]")];
-  const session = S.commandSession || null;
-  const last = S.lastCommandSession || null;
-  const briefing = session?.staffBriefing || last?.staffBriefing || null;
-  const finalCostText = document.getElementById("command-final-cost")?.innerText.trim() || "";
-  const inActiveCommand = !!session && isVisible(wrap);
-  const activeSessionAdvice = finalCostText && !finalCostText.includes("待拍板") ? (session?.adoptedAdviceId || "") : "";
-  const adoptedAdviceId = inActiveCommand ? activeSessionAdvice : (last?.committedPlan?.adoptedAdviceId || "");
-  return {
-    visible: isVisible(wrap),
-    primaryProblem: wrap?.dataset.aiPrimaryProblem || briefing?.primaryProblem || "",
-    primaryProblemText: problemEl?.innerText.trim() || briefing?.primaryProblemText || "",
-    sourceLivecastIds: clone(briefing?.sourceLivecastIds || session?.sourceLivecastIds || []),
-    sourceContextIds: clone(briefing?.sourceContextIds || session?.sourceContextIds || []),
-    visibleReads: Number(wrap?.dataset.aiVisibleReads || 0),
-    reads: readEls.map((el) => ({
-      adviceId: el.dataset.aiAdviceId || "",
-      role: el.dataset.aiRole || "",
-      cost: el.dataset.aiCost || "",
-      adopted: el.dataset.aiAdopted === "true",
-      aligned: el.dataset.aiAligned === "true",
-      text: (el.innerText || "").trim(),
-    })),
-    adoptedAdviceId,
-    acceptedCost: inActiveCommand ? (activeSessionAdvice ? (session?.acceptedCost || "") : "") : (last?.committedPlan?.acceptedCost || ""),
-    finalCostText,
-  };
-}
-
-function tacticLessonSignals() {
-  const modal = document.getElementById("tactic-lesson-modal");
-  const visible = isVisible(modal) && !modal?.classList.contains("hidden");
-  const openedLessonId = S.tacticLesson?.lessonId || (visible ? (modal?.dataset.aiLessonId || "") : "");
-  const current = openedLessonId ? TACTIC_LESSONS[openedLessonId] : null;
-  const frameIndex = Number(modal?.dataset.aiFrameIndex || S.tacticLesson?.frameIndex || 0);
-  const lessonTimeline = (lesson) => lesson?.timeline || null;
-  const beatCount = (lesson) => lessonTimeline(lesson)?.beats?.length || lesson.frames?.length || 0;
-  const movingActorCount = (lesson) => Object.values(lessonTimeline(lesson)?.tracks || {}).filter((track) => {
-    if (!Array.isArray(track) || track.length < 2) return false;
-    const first = track[0];
-    return track.some((point) => Math.abs((point.x || 0) - (first.x || 0)) > 0.5 || Math.abs((point.y || 0) - (first.y || 0)) > 0.5);
-  }).length;
-  const lessons = Object.values(TACTIC_LESSONS).map((lesson) => ({
-    lessonId: lesson.lessonId,
-    kind: lesson.kind,
-    key: lesson.key,
-    title: lesson.title,
-    intent: lesson.intent,
-    needs: clone(lesson.needs || []),
-    risks: clone(lesson.risks || []),
-    watchFor: clone(lesson.watchFor || []),
-    frameCount: beatCount(lesson),
-    timeline: {
-      system: lessonTimeline(lesson)?.system || "",
-      pureAnimation: !!lessonTimeline(lesson)?.pureAnimation,
-      personnel: Number(lessonTimeline(lesson)?.personnel || 0),
-      subject: lessonTimeline(lesson)?.subject || "",
-      durationMs: lessonTimeline(lesson)?.durationMs || 0,
-      actorCount: lessonTimeline(lesson)?.actors?.length || 0,
-      trackedActorCount: Object.keys(lessonTimeline(lesson)?.tracks || {}).length,
-      movingActorCount: movingActorCount(lesson),
-      maxActorTravel: timelineMaxActorTravel(lesson),
-      ballTransfers: Math.max(0, (lessonTimeline(lesson)?.ball?.length || 1) - 1),
-      arrowCount: lessonTimeline(lesson)?.arrows?.length || 0,
-      costPath: clone(lessonTimeline(lesson)?.costPath || []),
-    },
-  }));
-  const board = boardLessonDomSignals(modal);
-  return {
-    available: lessons.map((lesson) => lesson.lessonId),
-    openedLessonId,
-    visible,
-    watched: clone(S.learnedTactics || {}),
-    currentLesson: current ? {
-      id: current.lessonId,
-      title: current.title,
-      frameIndex,
-      frameCount: beatCount(current),
-      frameLabel: current.timeline?.beats?.[frameIndex]?.label || current.frames?.[frameIndex]?.label || "",
-      playheadMs: Number(modal?.dataset.aiPlayheadMs || S.tacticLesson?.playheadMs || 0),
-      durationMs: Number(modal?.dataset.aiDurationMs || current.timeline?.durationMs || 0),
-      actorCount: Number(modal?.dataset.aiTimelineActors || current.timeline?.actors?.length || 0),
-      pureAnimation: modal?.dataset.aiPureAnimation === "true" || !!current.timeline?.pureAnimation,
-      personnel: Number(modal?.dataset.aiPersonnel || current.timeline?.personnel || 0),
-      subject: modal?.dataset.aiSubject || current.timeline?.subject || "",
-      movingActorCount: Number(modal?.dataset.aiMovingActors || movingActorCount(current)),
-      ballTransfers: Number(modal?.dataset.aiBallTransfers || Math.max(0, (current.timeline?.ball?.length || 1) - 1)),
-      costPath: clone((modal?.dataset.aiCostPath || "").split(/\s+/).filter(Boolean)),
-      board,
-      motionProbe: sampleTacticLessonMotion(current.lessonId, [0, Math.floor((current.timeline?.durationMs || 1) / 2), current.timeline?.durationMs || 0]),
-      needs: clone(current.needs || []),
-      risks: clone(current.risks || []),
-      watchFor: clone(current.watchFor || []),
-    } : null,
-    lessons,
-  };
-}
-
-function boardLessonDomSignals(modal) {
-  const board = document.getElementById("tactic-lesson-board");
-  const scrubber = document.getElementById("tactic-lesson-scrubber");
-  const actorEls = [...(board?.querySelectorAll(".board-piece[data-ai-actor-id]") || [])];
-  const ballEl = board?.querySelector("[data-ai-ball='true']");
-  return {
-    playheadMs: Number(board?.dataset.aiPlayheadMs || 0),
-    durationMs: Number(board?.dataset.aiDurationMs || 0),
-    actorCount: actorEls.length,
-    personnel: Number(board?.dataset.aiPersonnel || 0),
-    pureAnimation: board?.dataset.aiPureAnimation === "true",
-    activeArrows: Number(board?.dataset.aiActiveArrows || board?.querySelectorAll(".board-arrow").length || 0),
-    activeZones: Number(board?.dataset.aiActiveZones || board?.querySelectorAll(".board-zone").length || 0),
-    ballPresent: !!ballEl,
-    scrubberValue: Number(scrubber?.value || 0),
-    scrubberMax: Number(scrubber?.max || 0),
-    actors: actorEls.map((el) => ({
-      id: el.dataset.aiActorId || "",
-      side: el.dataset.aiSide || "",
-      role: el.dataset.aiRole || "",
-      x: Number(el.dataset.aiX || parsePercent(el.style.left)),
-      y: Number(el.dataset.aiY || parsePercent(el.style.top)),
-    })),
-    ball: ballEl ? {
-      holder: ballEl.dataset.aiHolder || "",
-      label: ballEl.dataset.aiLabel || "",
-      x: Number(ballEl.dataset.aiX || parsePercent(ballEl.style.left)),
-      y: Number(ballEl.dataset.aiY || parsePercent(ballEl.style.top)),
-    } : null,
-    modalVisible: isVisible(modal) && !modal?.classList.contains("hidden"),
-  };
-}
-
-function sampleTacticLessonMotion(lessonId, sampleMs = null) {
-  const lesson = TACTIC_LESSONS[lessonId];
-  const timeline = lesson?.timeline;
-  if (!timeline) return null;
-  const duration = Number(timeline.durationMs || 0);
-  const samples = Array.isArray(sampleMs) && sampleMs.length ? sampleMs : [0, Math.floor(duration / 2), duration];
-  const normalized = samples.map((ms) => Math.max(0, Math.min(duration, Number(ms) || 0)));
-  const frames = normalized.map((ms) => ({
-    ms,
-    actors: Object.fromEntries((timeline.actors || []).map((actor) => [actor.id, sampleTrack(timeline.tracks?.[actor.id], ms)])),
-    ballHolder: activeBallHolder(timeline, ms),
-  }));
-  return {
-    lessonId,
-    durationMs: duration,
-    sampleMs: normalized,
-    maxActorTravel: timelineMaxActorTravel(lesson),
-    ballHolders: [...new Set(frames.map((frame) => frame.ballHolder).filter(Boolean))],
-    frames,
-  };
-}
-
-function timelineMaxActorTravel(lesson) {
-  const tracks = lesson?.timeline?.tracks || {};
-  let max = 0;
-  Object.values(tracks).forEach((track) => {
-    if (!Array.isArray(track) || track.length < 2) return;
-    const first = track[0];
-    track.forEach((point) => {
-      const dx = (Number(point.x) || 0) - (Number(first.x) || 0);
-      const dy = (Number(point.y) || 0) - (Number(first.y) || 0);
-      max = Math.max(max, Math.sqrt(dx * dx + dy * dy));
-    });
-  });
-  return Math.round(max * 10) / 10;
-}
-
-function sampleTrack(track, playhead) {
-  if (!Array.isArray(track) || !track.length) return { x: 50, y: 50 };
-  const points = track.slice().sort((a, b) => a.t - b.t);
-  if (playhead <= points[0].t) return { x: points[0].x, y: points[0].y };
-  for (let i = 0; i < points.length - 1; i += 1) {
-    const a = points[i], b = points[i + 1];
-    if (playhead >= a.t && playhead <= b.t) {
-      const k = (playhead - a.t) / Math.max(1, b.t - a.t);
-      return {
-        x: Math.round((a.x + (b.x - a.x) * k) * 10) / 10,
-        y: Math.round((a.y + (b.y - a.y) * k) * 10) / 10,
-      };
-    }
-  }
-  const last = points[points.length - 1];
-  return { x: last.x, y: last.y };
-}
-
-function activeBallHolder(timeline, playhead) {
-  let holder = "";
-  (timeline.ball || []).forEach((event) => {
-    if (event.t <= playhead) holder = event.holder || holder;
-  });
-  return holder;
-}
-
-function postgameRecapSignals() {
-  const wrap = document.getElementById("post-coach-recap");
-  const itemEls = [...document.querySelectorAll("#post-coach-recap .post-recap-item")];
-  const lessonLinks = [...document.querySelectorAll("#post-coach-recap .post-recap-lesson")]
-    .map((btn) => btn.dataset.lessonId || "")
-    .filter(Boolean);
-  const stateItems = clone(S.postgameRecap || []);
-  const items = itemEls.map((el) => {
-    const id = el.dataset.aiCommandSessionId || "";
-    const stateItem = stateItems.find((item) => item.id === id) || {};
-    return {
-      id,
-      coachActionId: el.dataset.aiCoachActionId || stateItem.coachActionId || "",
-      adjustmentId: el.dataset.aiAdjustmentId || stateItem.adjustmentId || "",
-      adoptedAdviceId: el.dataset.aiAdoptedAdviceId || stateItem.adoptedAdviceId || "",
-      acceptedCost: el.dataset.aiAcceptedCost || stateItem.acceptedCost || "",
-      lessonId: el.dataset.aiLessonId || stateItem.lessonId || "",
-      result: el.dataset.aiResult || stateItem.result || "",
-      summaryLivecastId: stateItem.summaryLivecastId || "",
-      sourceLivecastIds: clone(stateItem.sourceLivecastIds || []),
-      sourceContextIds: clone(stateItem.sourceContextIds || []),
-      feedbackLivecastIds: clone(stateItem.feedbackLivecastIds || []),
-      text: (el.innerText || "").trim(),
-    };
-  });
-  return {
-    visible: isVisible(wrap) && !wrap?.classList.contains("hidden"),
-    count: itemEls.length,
-    stateItems,
-    items,
-    lessonLinks,
-  };
-}
-
-function commandLineupSignals() {
-  const recBox = document.getElementById("command-lineup-recommendations");
-  const confirmed = recBox?.querySelector(".lineup-rec.confirmed") || null;
-  return {
-    confirmationVisible: isVisible(confirmed),
-    confirmationText: confirmed ? (confirmed.innerText || "").trim() : "",
-    applyVisible: isVisible(document.getElementById("command-lineup-apply")),
-  };
-}
-
-function commandPanelMetrics() {
-  const panel = document.getElementById("cmd-wrap");
-  if (!panel) return { clientHeight: 0, scrollHeight: 0, scrollTop: 0, firstScreenFits: false };
-  return {
-    clientHeight: panel.clientHeight || 0,
-    scrollHeight: panel.scrollHeight || 0,
-    scrollTop: panel.scrollTop || 0,
-    firstScreenFits: (panel.scrollHeight || 0) <= (panel.clientHeight || 0) + 1,
-  };
-}
-
-function commandCommitSignals(feedRowsArg = null) {
-  const rows = feedRowsArg ? [...feedRowsArg] : [...document.querySelectorAll("#feed .feed-row")];
-  const last = S.lastCommandSession || null;
-  const plan = last?.committedPlan || null;
-  const coachActionId = plan?.coachActionId || last?.commitTrace?.coachActionId || "";
-  const summaryLivecastId = plan?.livecastId || last?.commitTrace?.livecastId || "";
-  const acceptedCost = plan?.acceptedCost || last?.commitTrace?.acceptedCost || "";
-  const acceptedCostText = plan?.acceptedCostText || "";
-  const summaryRows = summaryLivecastId
-    ? rows.filter((row) => row.dataset.aiLivecastId === summaryLivecastId && (row.innerText || "").includes("最终布置"))
-    : [];
-  const logicalSummaryRows = summaryRows.length || (summaryLivecastId && plan?.summaryText ? 1 : 0);
-  const commitRows = coachActionId
-    ? rows.filter((row) => row.dataset.aiCoachActionId === coachActionId)
-    : [];
-  const feedbackRows = commitRows.filter((row) => {
-    const source = row.dataset.aiTraceSource || "";
-    const kind = row.dataset.aiFeedbackKind || "";
-    return kind !== "command_summary" && (kind || source === "command-feedback" || source === "adjustment");
-  });
-  const feedbackReferencesAcceptedCost = !acceptedCost || feedbackRows.some((row) => {
-    const text = row.innerText || "";
-    return row.dataset.aiAcceptedCost === acceptedCost || (!!acceptedCostText && text.includes(acceptedCostText));
-  });
-  const draftSpam = commandDraftSpamRows(rows, last?.drafts || []);
-  return {
-    hasLastCommitted: !!last?.committed,
-    hasCommittedPlan: !!plan,
-    coachActionId,
-    adjustmentId: plan?.adjustmentId || last?.commitTrace?.adjustmentId || "",
-    livecastId: summaryLivecastId,
-    adoptedAdviceId: plan?.adoptedAdviceId || "",
-    acceptedCost,
-    acceptedCostText,
-    watchFor: clone(plan?.watchFor || []),
-    lessonId: plan?.lessonId || last?.commitTrace?.lessonId || "",
-    summaryText: plan?.summaryText || "",
-    summaryRows: logicalSummaryRows,
-    commitRows: commitRows.length,
-    feedbackRows: feedbackRows.length,
-    feedbackKinds: feedbackRows.map((row) => row.dataset.aiFeedbackKind || row.dataset.aiTraceSource || ""),
-    feedbackReferencesAcceptedCost,
-    summaryTracePresent: summaryRows.some((row) => !!row.dataset.aiLivecastId && !!row.dataset.aiAdjustmentId) || (!!summaryLivecastId && !!(plan?.adjustmentId || last?.commitTrace?.adjustmentId)),
-    draftCount: Array.isArray(last?.drafts) ? last.drafts.length : 0,
-    draftSpamRows: draftSpam.length,
-    draftSpamText: draftSpam.slice(0, 3),
-  };
-}
-
-function commandDraftSpamRows(rows, drafts) {
-  if (!Array.isArray(drafts) || !drafts.length) return [];
-  const texts = rows.map((row) => row.innerText || "");
-  const hits = [];
-  drafts.forEach((draft) => {
-    const payload = draft.payload || {};
-    if (draft.type === "scheme" && payload.toName) {
-      const directSchemeText = [`我方改打【${payload.toName}】`, `防守切换【${payload.toName}】`, `教练调整：${payload.kind === "off" ? "进攻" : "防守"}切到【${payload.toName}】`];
-      texts.forEach((text) => {
-        if (directSchemeText.some((pattern) => text.includes(pattern))) hits.push(text);
-      });
-    }
-    if (draft.type === "substitution" && payload.inName && payload.outName) {
-      const subText = `换人：${payload.inName} 换下 ${payload.outName}`;
-      texts.forEach((text) => {
-        if (text.includes(subText)) hits.push(text);
-      });
-    }
-  });
-  return [...new Set(hits)];
 }
 
 function summarizeAssertions(assertions) {

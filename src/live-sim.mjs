@@ -16,7 +16,6 @@ import {
   SIGNATURE,
   TEMPLATES,
   HOME_COURT_PROFILE,
-  HOME_FLAVOR,
   OFFICIATING_FLAVOR,
   CLUTCH_FLAVOR,
   OFF_SCHEMES,
@@ -24,12 +23,44 @@ import {
   DEF_BASE,
   MATCHUP,
   SCHEME_FLAVOR,
-} from "./data/commentary-data.mjs?v=five-motion-31";
-import { SERIES_PBP_LIBRARY, SERIES_ATMOSPHERE } from "./data/series-pbp-data.mjs?v=five-motion-31";
-import { S, QUARTERS, QUARTER_SECONDS, HOME_BY_GAME, STAT_KEYS, CLUTCH_MAP } from "./state.mjs?v=five-motion-31";
-import { $, rand, clamp, fill } from "./utils.mjs?v=five-motion-31";
-import { initAiVerification, installAiDeterminism, syncAiVerification } from "./ai-verify.mjs?v=five-motion-31";
-import { TACTIC_LESSONS } from "./data/tactical-data.mjs?v=five-motion-31";
+} from "./data/commentary-data.mjs?v=action-motion-33";
+import { SERIES_PBP_LIBRARY } from "./data/series-pbp-data.mjs?v=action-motion-33";
+import { S, QUARTERS, QUARTER_SECONDS, HOME_BY_GAME, STAT_KEYS, CLUTCH_MAP } from "./state.mjs?v=action-motion-33";
+import { $, rand, clamp, fill } from "./utils.mjs?v=action-motion-33";
+import { initAiVerification, installAiDeterminism, syncAiVerification } from "./ai-verify.mjs?v=action-motion-33";
+import {
+  closeTacticLesson,
+  initTacticBoardFeature,
+  lessonForScheme,
+  openTacticLesson,
+} from "./features/tactic-board.mjs?v=action-motion-33";
+import {
+  fmtClock,
+  homeCrowdText,
+  maybeRichFeed,
+  pushFeed,
+  richFeed,
+} from "./features/livecast.mjs?v=action-motion-33";
+import { renderPostCoachRecap } from "./features/postgame-recap.mjs?v=action-motion-33";
+import {
+  commandEffectFeedbackText,
+  commandUi,
+  commitSubWindowSchemePlan,
+  costLabel,
+  createCommandSession,
+  initCommandCenterFeature,
+  recordCommandDraft,
+  recordCommandFeedbackTrace,
+  rememberCommandSession,
+  renderCommandFinalPlan,
+  renderCommandModeState,
+  renderCommandStaff,
+  renderCommandStage,
+  resetCommandUi,
+  setCommandMode,
+  toggleCommandExpand,
+  watchForLabel,
+} from "./features/command-center.mjs?v=action-motion-33";
 import {
   addCause,
   createAdjustmentWindow,
@@ -37,14 +68,13 @@ import {
   createPossessionContext,
   finalizePossessionContext,
   refreshLineupProfiles,
-  registerLivecastTrace,
   renderCoachReadModel,
   resetTacticalState,
   tacticalSubSuggestion,
   traceForContext,
   updateOpponentAdaptation,
   noteOpponentAdaptationLivecast,
-} from "./tactical.mjs?v=five-motion-31";
+} from "./tactical.mjs?v=action-motion-33";
 
 installAiDeterminism();
 
@@ -118,9 +148,16 @@ function startApp() {
   if ($("command-mode-lineup")) $("command-mode-lineup").onclick = () => setCommandMode("lineup");
   if ($("command-recent-toggle")) $("command-recent-toggle").onclick = () => toggleCommandExpand("recent");
   if ($("command-lineup-more")) $("command-lineup-more").onclick = () => toggleCommandExpand("lineup");
-  if ($("tactic-lesson-close")) $("tactic-lesson-close").onclick = () => closeTacticLesson();
-  if ($("tactic-lesson-autoplay")) $("tactic-lesson-autoplay").onclick = () => toggleTacticLessonAuto();
-  if ($("tactic-lesson-scrubber")) $("tactic-lesson-scrubber").oninput = (e) => seekTacticLesson(Number(e.target.value || 0));
+  initCommandCenterFeature({
+    renderCmd,
+    setMyScheme,
+    fmtClock,
+    lineupChangePairs,
+    pushFeed,
+    noteCoachAction,
+    stageCoachEffect,
+  });
+  initTacticBoardFeature({ watchForLabel });
   if ($("coach-prompt")) $("coach-prompt").onclick = () => {
     openCoachPrompt();
   };
@@ -782,767 +819,6 @@ function scheduleNext(ms) {
   S.timer = setTimeout(tick, ms ?? S.speed);
 }
 
-function resetCommandUi(mode = "tactics") {
-  S.commandUi = {
-    mode,
-    expandedRecent: false,
-    expandedOffense: false,
-    expandedDefense: false,
-    expandedLineup: false,
-  };
-}
-
-function setCommandMode(mode) {
-  if (!S.subWindow) return;
-  if (mode !== "tactics" && mode !== "lineup") return;
-  S.commandUi.mode = mode;
-  renderCmd();
-  syncAiVerification(`command-mode:${mode}`);
-}
-
-function toggleCommandExpand(section) {
-  if (!S.commandUi) resetCommandUi();
-  const key = section === "recent" ? "expandedRecent"
-    : section === "offense" ? "expandedOffense"
-    : section === "defense" ? "expandedDefense"
-    : section === "lineup" ? "expandedLineup"
-    : "";
-  if (!key) return;
-  S.commandUi[key] = !S.commandUi[key];
-  renderCmd();
-  syncAiVerification(`command-expand:${section}:${S.commandUi[key]}`);
-}
-
-function commandReasonLabel(by) {
-  if (!by) return "节间布置：比赛自然停表，可以调整战术和轮换。";
-  if (by === S.myTeam) {
-    const promptText = S.coachPrompt?.text ? `触发信号：${S.coachPrompt.text}` : "你主动叫暂停，把比赛按下来重新布置。";
-    return promptText;
-  }
-  return `${ROSTERS[by].name}叫暂停，比赛短暂停表。`;
-}
-
-function recentFeedTexts(limit = 4) {
-  const rows = [...document.querySelectorAll("#feed .feed-row")];
-  return rows.slice(-limit).map((row) => row.innerText.trim()).filter(Boolean);
-}
-
-function createCommandSession(by, msg, opt = {}) {
-  const contextIds = (S.tactical?.contextHistory || []).slice(-5).map((ctx) => ctx.contextId || ctx.possessionId).filter(Boolean);
-  const livecastIds = (S.tactical?.livecastTrace || []).slice(-5).map((row) => row.livecastId).filter(Boolean);
-  return {
-    id: `cmd-${S.gameNo}-${S.quarter}-${S.tickCount}-${S.tactical?.adjustmentSeq || 0}`,
-    reason: by === S.myTeam ? "player_timeout" : (!by ? "break" : "opponent_timeout"),
-    by: by || null,
-    openedAt: { quarter: S.quarter, clock: S.clock, tick: S.tickCount },
-    reasonText: opt.reasonText || commandReasonLabel(by),
-    message: msg || "",
-    sourceContextIds: contextIds,
-    sourceLivecastIds: livecastIds,
-    recentFeed: recentFeedTexts(4),
-    staffBriefing: null,
-    adoptedAdviceId: "",
-    acceptedCost: "",
-    watchFor: [],
-    drafts: [],
-    committedPlan: null,
-    commitTrace: null,
-    committed: false,
-  };
-}
-
-function clonePlain(value) {
-  return value == null ? value : JSON.parse(JSON.stringify(value));
-}
-
-function rememberCommandSession(session) {
-  if (!session?.committed || !session.committedPlan) return;
-  if (!Array.isArray(S.commandHistory)) S.commandHistory = [];
-  const entry = clonePlain(session);
-  const existingIndex = S.commandHistory.findIndex((item) => item.id === entry.id);
-  if (existingIndex >= 0) {
-    entry.feedbackRows = S.commandHistory[existingIndex].feedbackRows || entry.feedbackRows || [];
-    S.commandHistory[existingIndex] = entry;
-  } else {
-    entry.feedbackRows = entry.feedbackRows || [];
-    S.commandHistory.push(entry);
-  }
-  S.commandHistory = S.commandHistory.slice(-8);
-}
-
-function commandSessionMatchesTrace(session, trace) {
-  const plan = session?.committedPlan || null;
-  if (!plan || !trace) return false;
-  return (trace.coachActionId && trace.coachActionId === plan.coachActionId) ||
-    (trace.adjustmentId && trace.adjustmentId === plan.adjustmentId) ||
-    (trace.commandSessionId && trace.commandSessionId === session.id);
-}
-
-function recordCommandFeedbackTrace(trace, text) {
-  if (!trace?.coachActionId && !trace?.adjustmentId && !trace?.commandSessionId) return;
-  const feedback = {
-    livecastId: trace.livecastId || "",
-    coachActionId: trace.coachActionId || "",
-    adjustmentId: trace.adjustmentId || "",
-    acceptedCost: trace.acceptedCost || "",
-    adoptedAdviceId: trace.adoptedAdviceId || "",
-    lessonId: trace.lessonId || "",
-    feedbackKind: trace.feedbackKind || trace.source || "",
-    text: String(text || "").replace(/<[^>]+>/g, ""),
-    quarter: S.quarter,
-    clock: S.clock,
-    tick: S.tickCount,
-  };
-  const append = (session) => {
-    if (!commandSessionMatchesTrace(session, trace)) return false;
-    if (!Array.isArray(session.feedbackRows)) session.feedbackRows = [];
-    if (!session.feedbackRows.some((row) => row.livecastId && row.livecastId === feedback.livecastId)) {
-      session.feedbackRows.push(feedback);
-    }
-    return true;
-  };
-  append(S.lastCommandSession);
-  if (Array.isArray(S.commandHistory)) {
-    S.commandHistory.forEach((session) => append(session));
-  }
-}
-
-function recordCommandDraft(type, payload = {}) {
-  if (!S.commandSession) return;
-  if (!Array.isArray(S.commandSession.drafts)) S.commandSession.drafts = [];
-  S.commandSession.drafts.push({
-    type,
-    payload,
-    quarter: S.quarter,
-    clock: S.clock,
-    tick: S.tickCount,
-  });
-}
-
-const COMMAND_COSTS = {
-  corner_three: { label: "弱侧底角", short: "底角三分", feedback: "弱侧底角被放出来，对手已经开始找那一侧" },
-  fatigue: { label: "主力体力", short: "体力消耗", feedback: "主力体力继续被消耗，下一段轮换会更难" },
-  turnover: { label: "传导失误", short: "失误风险", feedback: "多传一次带来出球压力，失误风险开始抬头" },
-  rebound: { label: "篮板保护", short: "篮板风险", feedback: "空间变好以后，篮板保护少了一只手" },
-  star_fatigue: { label: "核心体力", short: "核心消耗", feedback: "核心继续硬解，体力账会往后拖" },
-  pace_control: { label: "追分速度", short: "节奏偏慢", feedback: "稳住失误的同时，追分速度也被压下来" },
-  role_offense: { label: "进攻火力", short: "火力下降", feedback: "防守站稳了，但进攻端少了一个处理点" },
-};
-
-const WATCH_FOR_LABELS = {
-  paint_touch_denied: "禁区触球是否被压住",
-  corner_three_allowed: "底角是否被放空",
-  transition_chance: "转换机会是否变多",
-  starter_fatigue: "主力体力是否继续下滑",
-  early_release: "弱侧是否出现出球口",
-  turnover_risk: "多传一次是否带来失误",
-  star_touch: "核心是否能稳定接管",
-  star_fatigue: "核心体力账是否变重",
-  open_three: "外线空位是否出来",
-  rebound_risk: "篮板保护是否变薄",
-  free_throw_pressure: "罚球压力是否形成",
-  paint_crowded: "禁区是否继续拥堵",
-  turnover_down: "失误是否减少",
-  pace_slow: "追分速度是否变慢",
-  stable_matchup: "对位是否站稳",
-  star_touch_allowed: "对手核心是否仍能单打",
-  star_cooled: "对手核心是否降温",
-  trap_pressure: "包夹压力是否回来",
-  scheme_execution: "战术是否跑出第一波效果",
-  defense_execution: "防守第一落点是否到位",
-  cost_watch: "代价是否开始出现",
-};
-
-function costLabel(costId) {
-  return COMMAND_COSTS[costId]?.short || COMMAND_COSTS[costId]?.label || "执行代价";
-}
-
-function watchForLabel(tag) {
-  return WATCH_FOR_LABELS[tag] || tag;
-}
-
-let tacticLessonRaf = null;
-
-function lessonForScheme(kind, key) {
-  return Object.values(TACTIC_LESSONS).find((lesson) => lesson.kind === kind && lesson.key === key) || null;
-}
-
-function lessonIdForAdvice(advice) {
-  const rec = advice?.recommendation || {};
-  return lessonForScheme(rec.kind, rec.key)?.lessonId || "";
-}
-
-function openTacticLesson(lessonId, openedFrom = "scheme-card") {
-  const lesson = TACTIC_LESSONS[lessonId];
-  if (!lesson || (!S.subWindow && S.phase !== "postgame")) return;
-  stopTacticLessonAuto();
-  S.tacticLesson = {
-    lessonId,
-    frameIndex: 0,
-    playheadMs: 0,
-    openedFrom,
-    autoPlaying: false,
-    lastAutoAt: 0,
-    lastSyncAt: 0,
-    openedAt: { quarter: S.quarter, clock: S.clock, tick: S.tickCount },
-  };
-  markTacticLessonFrame(lessonId, 0);
-  renderTacticLessonModal();
-  toggleTacticLessonAuto({ sync: false });
-  syncAiVerification(`lesson:open:${lessonId}`);
-}
-
-function closeTacticLesson({ sync = true } = {}) {
-  stopTacticLessonAuto();
-  S.tacticLesson = null;
-  const modal = $("tactic-lesson-modal");
-  if (modal) modal.classList.add("hidden");
-  if (sync) syncAiVerification("lesson:close");
-}
-
-function stepTacticLesson(delta) {
-  const state = S.tacticLesson;
-  const lesson = state ? TACTIC_LESSONS[state.lessonId] : null;
-  if (!state || !lesson) return;
-  stopTacticLessonAuto();
-  const beats = lessonBeats(lesson);
-  const next = clamp((state.frameIndex || 0) + delta, 0, beats.length - 1);
-  if (next === state.frameIndex) {
-    renderTacticLessonModal();
-    return;
-  }
-  state.frameIndex = next;
-  state.playheadMs = beats[next]?.t || 0;
-  markTacticLessonFrame(state.lessonId, next);
-  renderTacticLessonModal();
-  syncAiVerification(`lesson:frame:${state.lessonId}:${next}`);
-}
-
-function seekTacticLesson(ms) {
-  const state = S.tacticLesson;
-  const lesson = state ? TACTIC_LESSONS[state.lessonId] : null;
-  if (!state || !lesson) return;
-  stopTacticLessonAuto();
-  state.playheadMs = clamp(Number(ms) || 0, 0, lessonDuration(lesson));
-  state.frameIndex = activeBeatIndex(lesson, state.playheadMs);
-  markTacticLessonFrame(state.lessonId, state.frameIndex);
-  renderTacticLessonModal();
-  syncAiVerification(`lesson:seek:${state.lessonId}:${Math.round(state.playheadMs)}`);
-}
-
-function toggleTacticLessonAuto({ sync = true } = {}) {
-  const state = S.tacticLesson;
-  if (!state) return;
-  if (state.autoPlaying) {
-    stopTacticLessonAuto();
-    renderTacticLessonModal();
-    if (sync) syncAiVerification("lesson:auto:off");
-    return;
-  }
-  const lesson = TACTIC_LESSONS[state.lessonId];
-  if (!lesson) return;
-  if ((state.playheadMs || 0) >= lessonDuration(lesson) - 30) {
-    state.playheadMs = 0;
-    state.frameIndex = 0;
-  }
-  state.autoPlaying = true;
-  state.lastAutoAt = performance.now();
-  state.lastSyncAt = state.lastAutoAt;
-  renderTacticLessonModal();
-  tacticLessonRaf = requestAnimationFrame(tickTacticLessonAuto);
-  if (sync) syncAiVerification("lesson:auto:on");
-}
-
-function stopTacticLessonAuto() {
-  if (tacticLessonRaf) cancelAnimationFrame(tacticLessonRaf);
-  tacticLessonRaf = null;
-  if (S.tacticLesson) S.tacticLesson.autoPlaying = false;
-}
-
-function tickTacticLessonAuto(now) {
-  const state = S.tacticLesson;
-  const lesson = state ? TACTIC_LESSONS[state.lessonId] : null;
-  if (!state?.autoPlaying || !lesson) { stopTacticLessonAuto(); return; }
-  const duration = lessonDuration(lesson);
-  const prev = state.lastAutoAt || now;
-  const delta = Math.max(0, Math.min(120, now - prev));
-  state.lastAutoAt = now;
-  state.playheadMs = clamp((state.playheadMs || 0) + delta, 0, duration);
-  const beatIndex = activeBeatIndex(lesson, state.playheadMs);
-  if (beatIndex !== state.frameIndex) {
-    state.frameIndex = beatIndex;
-    markTacticLessonFrame(state.lessonId, beatIndex);
-  }
-  renderTacticLessonModal();
-  if (now - (state.lastSyncAt || 0) >= 250) {
-    state.lastSyncAt = now;
-    syncAiVerification(`lesson:auto:tick:${state.lessonId}:${Math.round(state.playheadMs)}`);
-  }
-  if (state.playheadMs >= duration) {
-    if (lesson.timeline?.loop) {
-      state.playheadMs = 0;
-      state.frameIndex = 0;
-      state.lastAutoAt = now;
-      state.lastSyncAt = now;
-      markTacticLessonFrame(state.lessonId, 0);
-      renderTacticLessonModal();
-      syncAiVerification(`lesson:auto:loop:${state.lessonId}`);
-    } else {
-      stopTacticLessonAuto();
-      renderTacticLessonModal();
-      syncAiVerification(`lesson:auto:complete:${state.lessonId}`);
-      return;
-    }
-  }
-  tacticLessonRaf = requestAnimationFrame(tickTacticLessonAuto);
-}
-
-function markTacticLessonFrame(lessonId, frameIndex) {
-  const lesson = TACTIC_LESSONS[lessonId];
-  if (!lesson) return;
-  if (!S.learnedTactics) S.learnedTactics = {};
-  const prev = S.learnedTactics[lessonId] || {};
-  const framesSeen = Array.isArray(prev.framesSeen) ? prev.framesSeen.slice() : [];
-  if (!framesSeen.includes(frameIndex)) framesSeen.push(frameIndex);
-  const beatCount = lessonBeats(lesson).length;
-  S.learnedTactics[lessonId] = {
-    ...prev,
-    lessonId,
-    framesSeen: framesSeen.sort((a, b) => a - b),
-    watched: framesSeen.length >= beatCount,
-    lastWatchedAt: { gameNo: S.gameNo, quarter: S.quarter, clock: S.clock, tick: S.tickCount },
-  };
-}
-
-function renderTacticLessonModal() {
-  const modal = $("tactic-lesson-modal");
-  const state = S.tacticLesson;
-  const lesson = state ? TACTIC_LESSONS[state.lessonId] : null;
-  if (!modal || !lesson) {
-    if (modal) modal.classList.add("hidden");
-    return;
-  }
-  const duration = lessonDuration(lesson);
-  const playhead = clamp(state.playheadMs || 0, 0, duration);
-  const beats = lessonBeats(lesson);
-  const index = activeBeatIndex(lesson, playhead);
-  const frame = lessonFrameForBeat(lesson, index);
-  const beat = beats[index] || { label: frame.label, text: frame.text, t: playhead };
-  state.frameIndex = index;
-  state.playheadMs = playhead;
-  modal.classList.remove("hidden");
-  modal.dataset.aiLessonId = lesson.lessonId;
-  modal.dataset.aiFrameIndex = String(index);
-  modal.dataset.aiFrameCount = String(beats.length);
-  modal.dataset.aiPlayheadMs = String(Math.round(playhead));
-  modal.dataset.aiDurationMs = String(duration);
-  modal.dataset.aiTimelineActors = String(lesson.timeline?.actors?.length || 0);
-  modal.dataset.aiMovingActors = String(countMovingActors(lesson));
-  modal.dataset.aiBallTransfers = String(Math.max(0, (lesson.timeline?.ball?.length || 1) - 1));
-  modal.dataset.aiCostPath = (lesson.timeline?.costPath || []).join(" ");
-  modal.dataset.aiPureAnimation = String(!!lesson.timeline?.pureAnimation);
-  modal.dataset.aiPersonnel = String(lesson.timeline?.personnel || lesson.timeline?.actors?.length || 0);
-  modal.dataset.aiSubject = lesson.timeline?.subject || "";
-  modal.dataset.aiWatchFor = lesson.watchFor.join(" ");
-  modal.dataset.aiOpenedFrom = state.openedFrom || "";
-  if ($("tactic-lesson-title")) $("tactic-lesson-title").textContent = lesson.title;
-  if ($("tactic-lesson-intent")) $("tactic-lesson-intent").textContent = `${beat.label || frame.label} · ${beat.text || frame.text}`;
-  const board = $("tactic-lesson-board");
-  if (board) {
-    board.innerHTML = renderTacticBoard(lesson, playhead);
-    board.dataset.aiPlayheadMs = String(Math.round(playhead));
-    board.dataset.aiDurationMs = String(duration);
-    board.dataset.aiTimelineActors = String(lesson.timeline?.actors?.length || 0);
-    board.dataset.aiPersonnel = String(lesson.timeline?.personnel || lesson.timeline?.actors?.length || 0);
-    board.dataset.aiPureAnimation = String(!!lesson.timeline?.pureAnimation);
-    board.dataset.aiActiveArrows = String((lesson.timeline?.arrows || []).filter((arrow) => playhead >= arrow.tStart && playhead <= arrow.tEnd).length);
-    board.dataset.aiActiveZones = String((lesson.timeline?.zones || []).filter((zone) => playhead >= zone.tStart && playhead <= zone.tEnd).length);
-    board.dataset.aiBallTransfers = String(Math.max(0, (lesson.timeline?.ball?.length || 1) - 1));
-  }
-  const scrub = $("tactic-lesson-scrubber");
-  if (scrub) {
-    scrub.max = String(duration);
-    scrub.value = String(Math.round(playhead));
-  }
-  if ($("tactic-lesson-time")) $("tactic-lesson-time").textContent = `${(playhead / 1000).toFixed(1)}s / ${(duration / 1000).toFixed(1)}s`;
-  const auto = $("tactic-lesson-autoplay");
-  if (auto) auto.textContent = state.autoPlaying ? "暂停" : (playhead >= duration - 30 ? "重播跑位" : "播放跑位");
-}
-
-function lessonDuration(lesson) {
-  return Math.max(1, Number(lesson.timeline?.durationMs || 0) || ((lesson.frames?.length || 1) - 1) * 1400 || 4200);
-}
-
-function lessonBeats(lesson) {
-  const beats = lesson.timeline?.beats;
-  if (beats?.length) return beats;
-  return (lesson.frames || []).map((frame, idx) => ({ t: idx * 1400, label: frame.label, text: frame.text }));
-}
-
-function activeBeatIndex(lesson, playhead) {
-  const beats = lessonBeats(lesson);
-  let index = 0;
-  beats.forEach((beat, idx) => {
-    if ((beat.t || 0) <= playhead + 10) index = idx;
-  });
-  return clamp(index, 0, beats.length - 1);
-}
-
-function lessonFrameForBeat(lesson, index) {
-  return lesson.frames?.[Math.min(index, lesson.frames.length - 1)] || {
-    label: lessonBeats(lesson)[index]?.label || "跑位",
-    title: lessonBeats(lesson)[index]?.label || lesson.title,
-    text: lessonBeats(lesson)[index]?.text || lesson.intent,
-    focus: lesson.watchFor?.map(watchForLabel).join(" / ") || "",
-  };
-}
-
-function countMovingActors(lesson) {
-  const tracks = lesson.timeline?.tracks || {};
-  return Object.values(tracks).filter((track) => {
-    if (!Array.isArray(track) || track.length < 2) return false;
-    const first = track[0];
-    return track.some((point) => Math.abs((point.x || 0) - (first.x || 0)) > 0.5 || Math.abs((point.y || 0) - (first.y || 0)) > 0.5);
-  }).length;
-}
-
-function renderTacticBoard(lesson, playhead) {
-  const timeline = lesson.timeline;
-  if (!timeline?.actors?.length) return renderStaticTacticBoard(lesson.frames?.[activeBeatIndex(lesson, playhead)] || lesson.frames?.[0] || {});
-  const positions = actorPositions(lesson, playhead);
-  const zones = (timeline.zones || []).filter((zone) => playhead >= zone.tStart && playhead <= zone.tEnd).map(tacticZone).join("");
-  const arrows = (timeline.arrows || []).filter((arrow) => playhead >= arrow.tStart && playhead <= arrow.tEnd).map((arrow) => boardArrow(arrow, positions, playhead)).join("");
-  const players = timeline.actors.map((actor) => boardPiece({ ...actor, ...(positions[actor.id] || { x: 50, y: 50 }) })).join("");
-  const ball = boardBall(lesson, playhead, positions);
-  const trails = timeline.actors.map((actor) => boardTrail(actor, timeline.tracks?.[actor.id])).join("");
-  return `
-    <div class="half-court">
-      <div class="court-paint"></div>
-      <div class="court-rim"></div>
-      <div class="court-arc"></div>
-      ${zones}
-      ${trails}
-      ${arrows}
-      ${players}
-      ${ball}
-    </div>`;
-}
-
-function renderStaticTacticBoard(frame) {
-  const players = [
-    ...(frame.offense || []).map((p) => boardPiece({ ...p, side: "offense" })),
-    ...(frame.defense || []).map((p) => boardPiece({ ...p, side: "defense" })),
-  ].join("");
-  const arrows = (frame.arrows || []).map((arrow) => boardArrow({ ...arrow, type: "pass" })).join("");
-  return `
-    <div class="half-court">
-      <div class="court-paint"></div>
-      <div class="court-rim"></div>
-      <div class="court-arc"></div>
-      ${arrows}
-      ${players}
-    </div>`;
-}
-
-function actorPositions(lesson, playhead) {
-  const tracks = lesson.timeline?.tracks || {};
-  return Object.fromEntries(Object.entries(tracks).map(([id, track]) => [id, interpolateTrack(track, playhead)]));
-}
-
-function interpolateTrack(track, playhead) {
-  if (!Array.isArray(track) || !track.length) return { x: 50, y: 50 };
-  const points = track.slice().sort((a, b) => a.t - b.t);
-  if (playhead <= points[0].t) return { x: points[0].x, y: points[0].y };
-  for (let i = 0; i < points.length - 1; i++) {
-    const a = points[i], b = points[i + 1];
-    if (playhead >= a.t && playhead <= b.t) {
-      const k = (playhead - a.t) / Math.max(1, b.t - a.t);
-      return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k };
-    }
-  }
-  const last = points[points.length - 1];
-  return { x: last.x, y: last.y };
-}
-
-function boardPiece(piece) {
-  return `<span class="board-piece ${piece.side || ""}" data-ai-actor-id="${piece.id || ""}" data-ai-side="${piece.side || ""}" data-ai-role="${piece.role || ""}" data-ai-x="${roundBoardValue(piece.x)}" data-ai-y="${roundBoardValue(piece.y)}" style="left:${piece.x}%;top:${piece.y}%"><b>${piece.label}</b><em>${piece.role || ""}</em></span>`;
-}
-
-function boardBall(lesson, playhead, positions) {
-  const events = lesson.timeline?.ball || [];
-  if (!events.length) return "";
-  let current = events[0], next = null;
-  for (let i = 0; i < events.length; i++) {
-    if ((events[i].t || 0) <= playhead) {
-      current = events[i];
-      next = events[i + 1] || null;
-    }
-  }
-  const from = current.holder ? (positions[current.holder] || { x: 50, y: 50 }) : { x: current.x || 50, y: current.y || 50 };
-  let pos = from;
-  const passWindow = next ? Math.min(520, Math.max(220, next.t - current.t)) : 0;
-  if (next && playhead >= next.t - passWindow) {
-    const to = next.holder ? (positions[next.holder] || from) : { x: next.x || from.x, y: next.y || from.y };
-    const k = (playhead - (next.t - passWindow)) / Math.max(1, passWindow);
-    pos = { x: from.x + (to.x - from.x) * clamp(k, 0, 1), y: from.y + (to.y - from.y) * clamp(k, 0, 1) };
-  }
-  return `<span class="board-ball" data-ai-ball="true" data-ai-holder="${current.holder || ""}" data-ai-label="${current.label || ""}" data-ai-x="${roundBoardValue(pos.x)}" data-ai-y="${roundBoardValue(pos.y)}" style="left:${pos.x}%;top:${pos.y}%"></span>`;
-}
-
-function tacticZone(zone) {
-  return `<span class="board-zone ${zone.type || ""}" data-ai-zone-type="${zone.type || ""}" style="left:${zone.x}%;top:${zone.y}%;width:${zone.w}%;height:${zone.h}%"><b>${zone.label || ""}</b></span>`;
-}
-
-function boardArrow(arrow, positions = null, playhead = 0) {
-  const start = boardPoint(arrow.from, positions);
-  const end = boardPoint(arrow.to, positions);
-  const x1 = start.x, y1 = start.y;
-  const x2 = end.x, y2 = end.y;
-  const dx = x2 - x1, dy = y2 - y1;
-  const length = Math.sqrt(dx * dx + dy * dy);
-  const angle = Math.atan2(dy, dx) * 180 / Math.PI;
-  const window = Math.max(1, (arrow.tEnd || playhead + 1) - (arrow.tStart || playhead));
-  const progress = positions ? clamp((playhead - arrow.tStart) / window, 0.25, 1) : 1;
-  return `<i class="board-arrow ${arrow.type || ""}" data-ai-arrow-type="${arrow.type || ""}" data-ai-x1="${roundBoardValue(x1)}" data-ai-y1="${roundBoardValue(y1)}" data-ai-x2="${roundBoardValue(x2)}" data-ai-y2="${roundBoardValue(y2)}" style="left:${x1}%;top:${y1}%;width:${length * progress}%;transform:rotate(${angle}deg)"><span>${arrow.label || ""}</span></i>`;
-}
-
-function boardTrail(actor, track) {
-  if (!Array.isArray(track) || track.length < 2) return "";
-  const points = track.slice().sort((a, b) => a.t - b.t).map((point) => `${roundBoardValue(point.x)},${roundBoardValue(point.y)}`).join(" ");
-  return `<svg class="board-trail" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polyline class="${actor.side || ""}" points="${points}" data-ai-trail-actor="${actor.id || ""}" /></svg>`;
-}
-
-function boardPoint(ref, positions = null) {
-  if (Array.isArray(ref)) return { x: Number(ref[0]) || 0, y: Number(ref[1]) || 0 };
-  if (positions && ref && positions[ref]) return positions[ref];
-  return { x: 50, y: 50 };
-}
-
-function roundBoardValue(value) {
-  return String(Math.round((Number(value) || 0) * 10) / 10);
-}
-
-function detectCommandProblem(recOff, recDef) {
-  const my = S.myTeam, opp = S.oppTeam;
-  const model = my ? renderCoachReadModel(my) : null;
-  const profile = S.tactical?.lineupProfiles?.[my] || null;
-  const recent = S.tactical?.contextHistory?.slice(-4) || [];
-  const recentAgainstMe = recent.filter((ctx) => ctx.defenseTeam === my);
-  const opponentHadAdvantage = recentAgainstMe.some((ctx) => (ctx.causeIds || []).includes("cause.scheme.counter"));
-  if (S.run.team === opp && S.run.pts >= 6) {
-    return { id: "run_pressure", title: `${ROSTERS[opp].short}打出 ${S.run.pts}-0，先决定怎么止血`, source: "run" };
-  }
-  if (profile?.tiredPlayers?.length || (profile?.averageStamina ?? 100) < 58) {
-    return { id: "fatigue", title: "场上体力开始影响执行，继续硬撑会付账", source: "lineup" };
-  }
-  if (opponentHadAdvantage || ["inside", "pace"].includes(S.scheme[opp]?.off)) {
-    return { id: "paint_pressure", title: "对手正在冲击禁区，护框压力上升", source: "context" };
-  }
-  if (["press", "double"].includes(S.scheme[opp]?.def) || model?.schemeFit === "bad") {
-    return { id: "ball_pressure", title: "推进和第一传被压住，需要给持球点出口", source: "scheme" };
-  }
-  if (S.scheme[opp]?.def === "paint" || S.scheme[opp]?.def === "zone") {
-    return { id: "spacing", title: "对手收缩站位，外线和弱侧机会会更关键", source: "scheme" };
-  }
-  return { id: "read_game", title: "比赛进入拉锯，先选择这次暂停的优先级", source: "neutral" };
-}
-
-function staffRead(id, role, claim, recommendation, costId, watchFor, opt = {}) {
-  return {
-    adviceId: id,
-    role,
-    claim,
-    recommendation,
-    costId,
-    costText: costLabel(costId),
-    watchFor,
-    confidence: opt.confidence || "medium",
-    evidence: opt.evidence || [],
-  };
-}
-
-function buildCoachStaffBriefing(recOff, recDef) {
-  const problem = detectCommandProblem(recOff, recDef);
-  const readsByProblem = {
-    paint_pressure: [
-      staffRead("advice-defense-paint", "defense", "收缩护框能先止住篮下，但底角会被放出来。", { kind: "def", key: "paint" }, "corner_three", ["paint_touch_denied", "corner_three_allowed"]),
-      staffRead("advice-offense-pace", "offense", "保持提速能打乱他们落位，但主力体力会继续掉。", { kind: "off", key: "pace" }, "fatigue", ["transition_chance", "starter_fatigue"]),
-    ],
-    ball_pressure: [
-      staffRead("advice-offense-motion", "offense", "团队传导能给持球点出口，但多传一次也会带来失误风险。", { kind: "off", key: "motion" }, "turnover", ["early_release", "turnover_risk"]),
-      staffRead("advice-offense-iso", "offense", "让核心单打能减少传球压力，但会继续消耗核心体力。", { kind: "off", key: "iso" }, "star_fatigue", ["star_touch", "star_fatigue"]),
-    ],
-    spacing: [
-      staffRead("advice-offense-perimeter", "offense", "外线火力能惩罚收缩，但篮板保护会变薄。", { kind: "off", key: "perimeter" }, "rebound", ["open_three", "rebound_risk"]),
-      staffRead("advice-offense-inside", "offense", "继续冲篮下能造杀伤，但会撞进他们的护框。", { kind: "off", key: "inside" }, "turnover", ["free_throw_pressure", "paint_crowded"]),
-    ],
-    fatigue: [
-      staffRead("advice-offense-balanced", "offense", "先打均衡能降低失误和消耗，但追分速度会慢。", { kind: "off", key: "balanced" }, "pace_control", ["turnover_down", "pace_slow"]),
-      staffRead("advice-defense-man", "defense", "回到人盯人能少跑轮转，但对手核心会得到单点处理。", { kind: "def", key: "man" }, "role_offense", ["stable_matchup", "star_touch_allowed"]),
-    ],
-    run_pressure: [
-      staffRead("advice-defense-double", "defense", "包夹核心能先打断对手气势，但角色球员会获得空位。", { kind: "def", key: "double" }, "corner_three", ["star_cooled", "corner_three_allowed"]),
-      staffRead("advice-offense-iso", "offense", "交给核心硬解能稳住情绪，但体力和包夹压力都会上来。", { kind: "off", key: "iso" }, "star_fatigue", ["star_touch", "trap_pressure"]),
-    ],
-    read_game: [
-      staffRead("advice-offense-rec", "offense", `${OFF_SCHEMES[recOff].name}能针对对手站位，但要接受${costLabel(recOff === "perimeter" ? "rebound" : "turnover")}。`, { kind: "off", key: recOff }, recOff === "perimeter" ? "rebound" : "turnover", ["scheme_execution", "cost_watch"]),
-      staffRead("advice-defense-rec", "defense", `${DEF_SCHEMES[recDef].name}能先处理对手强点，但会放大另一侧风险。`, { kind: "def", key: recDef }, recDef === "paint" || recDef === "double" ? "corner_three" : "role_offense", ["defense_execution", "cost_watch"]),
-    ],
-  };
-  const reads = readsByProblem[problem.id] || readsByProblem.read_game;
-  return {
-    briefingId: `staff-${S.gameNo}-${S.quarter}-${S.tickCount}`,
-    commandSessionId: S.commandSession?.id || "",
-    primaryProblem: problem.id,
-    primaryProblemText: problem.title,
-    source: problem.source,
-    sourceLivecastIds: S.commandSession?.sourceLivecastIds || [],
-    sourceContextIds: S.commandSession?.sourceContextIds || [],
-    reads: reads.slice(0, 2),
-  };
-}
-
-function ensureCommandStaffBriefing(recOff, recDef) {
-  if (!S.commandSession) return null;
-  if (!S.commandSession.staffBriefing) S.commandSession.staffBriefing = buildCoachStaffBriefing(recOff, recDef);
-  return S.commandSession.staffBriefing;
-}
-
-function roleLabel(role) {
-  return role === "offense" ? "进攻助教"
-    : role === "defense" ? "防守助教"
-    : role === "lineup" ? "轮换助教"
-    : "首席助教";
-}
-
-function adviceMatchesCurrent(advice) {
-  if (!advice || !S.myTeam) return false;
-  const rec = advice.recommendation || {};
-  if (rec.kind === "off" || rec.kind === "def") return S.scheme[S.myTeam]?.[rec.kind] === rec.key;
-  return false;
-}
-
-function selectedStaffAdvice() {
-  const reads = S.commandSession?.staffBriefing?.reads || [];
-  const adopted = reads.find((read) => read.adviceId === S.commandSession?.adoptedAdviceId);
-  return adopted && adviceMatchesCurrent(adopted) ? adopted : null;
-}
-
-function staffAdviceSummary(advice) {
-  if (!advice) return "";
-  const rec = advice.recommendation || {};
-  if (rec.kind === "off") return `${roleLabel(advice.role)}建议进攻打【${OFF_SCHEMES[rec.key]?.name || rec.key}】`;
-  if (rec.kind === "def") return `${roleLabel(advice.role)}建议防守切【${DEF_SCHEMES[rec.key]?.name || rec.key}】`;
-  return `${roleLabel(advice.role)}建议处理本次主要问题`;
-}
-
-function applyStaffAdvice(adviceId) {
-  if (!S.commandSession) return;
-  const advice = (S.commandSession.staffBriefing?.reads || []).find((item) => item.adviceId === adviceId);
-  if (!advice) return;
-  S.commandSession.adoptedAdviceId = advice.adviceId;
-  S.commandSession.acceptedCost = advice.costId;
-  S.commandSession.watchFor = advice.watchFor || [];
-  const rec = advice.recommendation || {};
-  if ((rec.kind === "off" || rec.kind === "def") && rec.key && S.scheme[S.myTeam]?.[rec.kind] !== rec.key) {
-    setMyScheme(rec.kind, rec.key);
-  } else {
-    renderCmd();
-  }
-  syncAiVerification(`staff-advice:${adviceId}`);
-}
-
-function renderCommandStage() {
-  renderCommandTopbar();
-  const title = $("command-title");
-  const reason = $("command-reason");
-  const risk = $("command-risk");
-  const recent = $("command-recent");
-  if (!title || !reason || !recent) return;
-  const session = S.commandSession;
-  title.textContent = session?.by === S.myTeam
-    ? "为什么叫停"
-    : "节间要点";
-  reason.textContent = session?.reasonText || "读懂刚才的问题，再决定怎么调整。";
-  const model = S.myTeam ? renderCoachReadModel(S.myTeam) : null;
-  const riskText = model?.risk ? String(model.risk).replace(/^风险[:：]\s*/, "") : "";
-  if (risk) risk.textContent = riskText ? `最大风险：${riskText}` : "最大风险：观察对手下一波反制。";
-  recent.innerHTML = "";
-  recent.classList.toggle("expanded", !!S.commandUi?.expandedRecent);
-  const allRecent = session?.recentFeed || [];
-  const visibleCount = S.commandUi?.expandedRecent ? 4 : 1;
-  allRecent.slice(-visibleCount).forEach((text) => {
-    const row = document.createElement("div");
-    row.className = "command-recent-row";
-    row.textContent = text;
-    recent.appendChild(row);
-  });
-  const toggle = $("command-recent-toggle");
-  if (toggle) {
-    const canExpand = allRecent.length > 2;
-    toggle.classList.toggle("hidden", !canExpand);
-    toggle.textContent = S.commandUi?.expandedRecent ? "收起复盘" : `展开复盘（${Math.min(4, allRecent.length)}条）`;
-  }
-}
-
-function renderCommandTopbar() {
-  const title = $("command-topbar-title");
-  const meta = $("command-topbar-meta");
-  if (title) title.textContent = S.subBy ? "暂停布置" : "节间布置";
-  if (meta) {
-    const my = S.myTeam ? ROSTERS[S.myTeam].short : "我方";
-    const opp = S.oppTeam ? ROSTERS[S.oppTeam].short : "对手";
-    meta.textContent = `${my} ${S.score[S.myTeam] ?? 0} - ${S.score[S.oppTeam] ?? 0} ${opp} · Q${S.quarter} ${fmtClock(S.clock)}`;
-  }
-}
-
-function renderCommandStaff(showHints, recOff, recDef) {
-  const wrap = $("command-staff");
-  const problem = $("command-staff-problem");
-  const readsBox = $("command-staff-reads");
-  if (!wrap || !problem || !readsBox) return;
-  const briefing = ensureCommandStaffBriefing(recOff, recDef);
-  if (!briefing) return;
-  wrap.dataset.aiPrimaryProblem = briefing.primaryProblem || "";
-  wrap.dataset.aiVisibleReads = showHints ? String(Math.min(2, briefing.reads.length)) : "0";
-  problem.textContent = briefing.primaryProblemText || "先决定这次暂停要解决什么。";
-  readsBox.innerHTML = "";
-  if (!showHints) {
-    const muted = document.createElement("div");
-    muted.className = "staff-read muted";
-    muted.innerHTML =
-      `<div class="staff-read-head"><span class="staff-read-role">首席助教</span><span class="staff-read-cost">待拍板</span></div>` +
-      `<div class="staff-read-claim">打开助教提示后，会给出两种有代价的处理方向。</div>`;
-    readsBox.appendChild(muted);
-    return;
-  }
-  briefing.reads.slice(0, 2).forEach((advice) => {
-    const row = document.createElement("div");
-    const adopted = advice.adviceId === S.commandSession?.adoptedAdviceId;
-    const aligned = adviceMatchesCurrent(advice);
-    const active = (adopted && aligned) || aligned;
-    row.className = "staff-read" + (active ? " active" : "");
-    row.dataset.aiAdviceId = advice.adviceId;
-    row.dataset.aiRole = advice.role;
-    row.dataset.aiCost = advice.costId;
-    row.dataset.aiAdopted = String(adopted && aligned);
-    row.dataset.aiAligned = String(aligned);
-    row.innerHTML =
-      `<div class="staff-read-head"><span class="staff-read-role">${roleLabel(advice.role)}</span>` +
-      `<span class="staff-read-cost">代价：${advice.costText}</span></div>` +
-      `<div class="staff-read-claim">${advice.claim}</div>` +
-      `<button class="staff-read-action" type="button" data-advice-id="${advice.adviceId}">${adopted && aligned ? "已纳入方案" : (aligned ? "确认接受代价" : "采纳这个方向")}</button>`;
-    const btn = row.querySelector("button");
-    if (btn) {
-      btn.disabled = adopted && aligned;
-      btn.onclick = () => applyStaffAdvice(advice.adviceId);
-    }
-    readsBox.appendChild(row);
-  });
-}
-
-/* 开启「换人/调整」窗口：暂停模拟、解锁换人、切到指挥台
-   seconds = 布置倒计时（真实秒）；by = 谁叫的暂停（null=节间休息） */
 function openSubWindow(msg, btnText, seconds, by, opt = {}) {
   S.running = false;
   S.subWindow = true;
@@ -1640,131 +916,6 @@ function updatePauseCountdown() {
   time.textContent = left;
   time.classList.toggle("danger", left <= 5);
   if (label) label.textContent = S.subBy ? "倒计时" : "节间";
-}
-
-function commitSubWindowSchemePlan() {
-  if (!S.myTeam || !S.subWindowSchemeBase || !S.scheme[S.myTeam]) return null;
-  const base = S.subWindowSchemeBase;
-  const current = S.scheme[S.myTeam];
-  const schemeChanges = ["off", "def"].filter((kind) => base[kind] && current[kind] && base[kind] !== current[kind]).map((kind) => {
-    const pool = kind === "off" ? OFF_SCHEMES : DEF_SCHEMES;
-    return {
-      kind,
-      from: base[kind],
-      to: current[kind],
-      fromName: pool[base[kind]]?.name || base[kind],
-      toName: pool[current[kind]]?.name || current[kind],
-    };
-  });
-  const lineupChanges = lineupChangePairs().map(({ inP, outP }) => ({
-    inId: inP.id,
-    outId: outP.id,
-    inName: inP.name,
-    outName: outP.name,
-  }));
-  const selectedAdvice = selectedStaffAdvice();
-  const adoptedAdviceId = selectedAdvice?.adviceId || "";
-  const acceptedCost = selectedAdvice?.costId || "";
-  const lessonId = lessonIdForAdvice(selectedAdvice);
-  const lessonWatchFor = lessonId ? (TACTIC_LESSONS[lessonId]?.watchFor || []) : [];
-  let watchFor = selectedAdvice?.watchFor || [];
-  if (lessonWatchFor.length && !watchFor.some((tag) => lessonWatchFor.includes(tag))) {
-    watchFor = [...new Set([...watchFor, ...lessonWatchFor.slice(0, 2)])];
-  }
-  if (!schemeChanges.length && !lineupChanges.length && !adoptedAdviceId) return null;
-
-  const expectedCauseIds = new Set(["cause.coach.adjustment_success"]);
-  schemeChanges.forEach((change) => {
-    if (change.kind === "off") expectedCauseIds.add("cause.scheme.counter");
-    if (change.kind === "def") expectedCauseIds.add("cause.defense.stable");
-  });
-  if (lineupChanges.length) expectedCauseIds.add("cause.lineup.fit");
-  if (selectedAdvice?.recommendation?.kind === "off") expectedCauseIds.add("cause.scheme.counter");
-  if (selectedAdvice?.recommendation?.kind === "def") expectedCauseIds.add("cause.defense.stable");
-
-  const tacticalAction = createCoachAction("command_commit", {
-    team: S.myTeam,
-    sessionId: S.commandSession?.id || "",
-    schemeChanges,
-    lineupChanges,
-    drafts: S.commandSession?.drafts || [],
-    adoptedAdviceId,
-    acceptedCost,
-    watchFor,
-    lessonId,
-  });
-  const adjustment = createAdjustmentWindow(tacticalAction, {
-    type: "command_commit",
-    label: "最终布置",
-    targetProblem: "integrated_command",
-    expectedCauseIds: [...expectedCauseIds],
-    adoptedAdviceId,
-    acceptedCost,
-    watchFor,
-    lessonId,
-  });
-  const trace = {
-    coachActionId: tacticalAction.coachActionId,
-    adjustmentId: adjustment.adjustmentId,
-    causeIds: [...expectedCauseIds],
-    source: "command-commit",
-    commandSessionId: S.commandSession?.id || "",
-    adoptedAdviceId,
-    acceptedCost,
-    watchFor,
-    lessonId,
-    feedbackKind: "command_summary",
-  };
-
-  const parts = [];
-  schemeChanges.forEach((change) => {
-    parts.push(`${change.kind === "off" ? "进攻" : "防守"}【${change.toName}】`);
-  });
-  if (lineupChanges.length) {
-    parts.push(`换人 ${lineupChanges.map((change) => `${change.inName}上、${change.outName}下`).join("；")}`);
-  }
-  if (!schemeChanges.length && !lineupChanges.length && selectedAdvice) parts.push(staffAdviceSummary(selectedAdvice));
-  if (acceptedCost) parts.push(`接受代价：${costLabel(acceptedCost)}`);
-  const summaryText = `📋 最终布置：${parts.join("；")}。`;
-  const liveTrace = pushFeed(S.myTeam, summaryText, { team: S.myTeam, coach: true, trace });
-  const coachLabel = `${schemeChanges.length ? "战术" : ""}${lineupChanges.length ? "换人" : ""}${selectedAdvice ? "取舍" : ""}最终布置`;
-  noteCoachAction(coachLabel, liveTrace);
-  stageCoachEffect("command", "最终布置", commandCommitImpact(schemeChanges, lineupChanges, selectedAdvice), liveTrace);
-
-  const committedPlan = {
-    summaryText,
-    schemeChanges,
-    lineupChanges,
-    adoptedAdviceId,
-    acceptedCost,
-    acceptedCostText: acceptedCost ? costLabel(acceptedCost) : "",
-    watchFor,
-    lessonId,
-    staffAdviceSummary: staffAdviceSummary(selectedAdvice),
-    coachActionId: liveTrace.coachActionId,
-    adjustmentId: liveTrace.adjustmentId,
-    livecastId: liveTrace.livecastId,
-    expectedCauseIds: [...expectedCauseIds],
-  };
-  if (S.commandSession) {
-    S.commandSession.committedPlan = committedPlan;
-    S.commandSession.commitTrace = liveTrace;
-  }
-  syncAiVerification("command-commit");
-  return committedPlan;
-}
-
-function commandCommitImpact(schemeChanges, lineupChanges, selectedAdvice = null) {
-  const hasOff = schemeChanges.some((change) => change.kind === "off");
-  const hasDef = schemeChanges.some((change) => change.kind === "def");
-  const hasLineup = lineupChanges.length > 0;
-  if (hasOff && hasDef && hasLineup) return "攻防和体力一起落位，接下来几个回合会集中验证这套方案";
-  if ((hasOff || hasDef) && hasLineup) return "战术方向和轮换同时明确，先看出手质量和体力风险是否回稳";
-  if (hasOff && hasDef) return "攻防方向同时切换，接下来会看对手是否还按原方式惩罚你";
-  if (hasOff) return "进攻触发点已经重排，下一波重点看机会质量";
-  if (hasDef) return "防守落点已经重排，下一波重点看对手核心是否降温";
-  if (selectedAdvice) return `你接受了${costLabel(selectedAdvice.costId)}这个取舍，下一波重点验证助教判断是否成立`;
-  return "体力风险被提前拆掉，轮换效果会在后续回合兑现";
 }
 
 function capTimeouts(max, reason) {
@@ -2464,75 +1615,7 @@ function heatTag(p) {
   return { t: "普通", c: "flat" };
 }
 
-// ----------------- 直播流渲染 -----------------
-function pushFeed(team, text, opt = {}) {
-  const feed = $("feed");
-  const row = document.createElement("div");
-  const trace = registerLivecastTrace(team, text, opt);
-  row.className = "feed-row";
-  row.setAttribute("data-testid", "feed-row");
-  row.dataset.aiTeam = team;
-  row.dataset.aiQuarter = String(S.quarter);
-  row.dataset.aiClock = fmtClock(S.clock);
-  row.dataset.aiScore = `${S.score.knicks}-${S.score.spurs}`;
-  row.dataset.aiLivecastId = trace.livecastId;
-  if (trace.possessionId) row.dataset.aiPossessionId = trace.possessionId;
-  if (trace.contextId) row.dataset.aiContextId = trace.contextId;
-  if (trace.causeIds && trace.causeIds.length) row.dataset.aiCauseIds = trace.causeIds.join(" ");
-  if (trace.coachActionId) row.dataset.aiCoachActionId = trace.coachActionId;
-  if (trace.adjustmentId) row.dataset.aiAdjustmentId = trace.adjustmentId;
-  if (trace.adaptationId) row.dataset.aiAdaptationId = trace.adaptationId;
-  if (trace.commandSessionId) row.dataset.aiCommandSessionId = trace.commandSessionId;
-  if (trace.adoptedAdviceId) row.dataset.aiAdoptedAdviceId = trace.adoptedAdviceId;
-  if (trace.acceptedCost) row.dataset.aiAcceptedCost = trace.acceptedCost;
-  if (trace.lessonId) row.dataset.aiLessonId = trace.lessonId;
-  if (trace.feedbackKind) row.dataset.aiFeedbackKind = trace.feedbackKind;
-  if (trace.source) row.dataset.aiTraceSource = trace.source;
-  if (opt.score) row.classList.add(team === S.myTeam ? "score-mine" : "score-opp");
-  if (opt.big) row.classList.add("big-play");
-  if (opt.mini) row.classList.add("mini");
-  if (opt.coach) row.classList.add("coach-effect");
-  if (opt.coachResult) row.classList.add("coach-result");
-  if (team === "system") row.classList.add("sys");
-
-  const t = team === "system" ? "" :
-    `<span class="ft-team" style="background:${ROSTERS[team].accent};color:#111">${ROSTERS[team].short}</span>`;
-  const clk = team === "system" ? "" :
-    `<span class="ft-clock">Q${S.quarter} ${fmtClock(S.clock)}</span>`;
-
-  row.innerHTML =
-    `<div class="ft-meta">${clk}${t}</div>` +
-    `<div class="ft-text">${text}` +
-    (opt.score ? ` <b class="ft-now">(${S.score.knicks}-${S.score.spurs})</b>` : "") +
-    `</div>`;
-  feed.appendChild(row);
-  feed.scrollTop = feed.scrollHeight;
-  while (feed.children.length > 60) feed.removeChild(feed.firstChild);
-  syncAiVerification("feed:push");
-  return trace;
-}
-
-function fmtClock(sec) {
-  sec = Math.max(0, sec);
-  const m = Math.floor(sec / 60), s = sec % 60;
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
-
 // ----------------- 前四场真实素材：场内外氛围混播 -----------------
-function richPool(stage) {
-  if (typeof SERIES_ATMOSPHERE === "undefined") return null;
-  return SERIES_ATMOSPHERE[stage] || null;
-}
-function richFeed(stage, team, map = {}, chance = 1, opt = {}) {
-  const pool = richPool(stage);
-  if (!pool || !pool.length || Math.random() > chance) return false;
-  const text = fill(rand(pool), map);
-  pushFeed(team || "system", text, { team, mini: opt.mini !== false, big: !!opt.big });
-  return true;
-}
-function maybeRichFeed(stage, team, map = {}, chance = 0.18, opt = {}) {
-  return richFeed(stage, team, map, chance, opt);
-}
 function maybeGameTexture(off, def, handler) {
   const m = { T: ROSTERS[off].name, D: ROSTERS[def].name, O: handler.name, P: handler.name };
   maybeRichFeed("bringUp", off, m, 0.24);
@@ -2550,13 +1633,6 @@ function crowdLevel() {
   if (S.crowdHeat >= 16) return "高涨";
   if (S.crowdHeat >= 8) return "起势";
   return "安静";
-}
-function homeCrowdText(kind, map = {}, chance = 1) {
-  if (!S.homeTeam || typeof HOME_FLAVOR === "undefined" || Math.random() > chance) return false;
-  const pool = HOME_FLAVOR[S.homeTeam] && HOME_FLAVOR[S.homeTeam][kind];
-  if (!pool || !pool.length) return false;
-  pushFeed("system", fill(rand(pool), { H: ROSTERS[S.homeTeam].name, A: ROSTERS[S.awayTeam].name, ...map }), { mini: kind !== "opening", big: kind === "clutch" });
-  return true;
 }
 function nudgeCrowd(team, delta, kind, chance = 0.2) {
   if (!S.homeTeam) return;
@@ -3007,16 +2083,6 @@ function markCoachEffect(type, title, impact, trace = null) {
   });
 }
 
-function commandEffectFeedbackText(effect, positive) {
-  if (!effect?.acceptedCost) return "";
-  const cost = COMMAND_COSTS[effect.acceptedCost];
-  const costText = cost?.short || effect.acceptedCostText || "这次代价";
-  if (positive) {
-    return `这次布置先兑现了目标，但要继续盯住【${costText}】：${cost?.feedback || "代价仍可能在后续回合出现"}。`;
-  }
-  return `这次选择的代价开始露头：【${costText}】正在影响场面，${cost?.feedback || "需要下一次暂停或轮换继续处理"}。`;
-}
-
 function resolvePendingCoachEffect() {
   const e = S.pendingCoachEffect;
   if (!e || S.tickCount <= e.atTick + 1 || S.gameOver) return;
@@ -3182,34 +2248,6 @@ function bestCounterOff(oppDef) {
   return best;
 }
 
-function commandUi() {
-  if (!S.commandUi) resetCommandUi();
-  return S.commandUi;
-}
-
-function renderCommandModeState() {
-  const ui = commandUi();
-  const tactics = $("command-tactics-body");
-  const lineup = $("command-lineup-body");
-  const tacticsBtn = $("command-mode-tactics");
-  const lineupBtn = $("command-mode-lineup");
-  if (tactics) tactics.classList.toggle("hidden", ui.mode !== "tactics");
-  if (lineup) lineup.classList.toggle("hidden", ui.mode !== "lineup");
-  if (tacticsBtn) {
-    tacticsBtn.classList.toggle("active", ui.mode === "tactics");
-    tacticsBtn.setAttribute("aria-pressed", String(ui.mode === "tactics"));
-  }
-  if (lineupBtn) {
-    lineupBtn.classList.toggle("active", ui.mode === "lineup");
-    lineupBtn.setAttribute("aria-pressed", String(ui.mode === "lineup"));
-  }
-}
-
-function schemeLabel(kind, key) {
-  const info = kind === "off" ? OFF_SCHEMES[key] : DEF_SCHEMES[key];
-  return info ? `${info.icon}${info.name}` : "-";
-}
-
 function backupScheme(kind, recKey) {
   const current = S.scheme[S.myTeam]?.[kind];
   const pool = kind === "off"
@@ -3257,11 +2295,6 @@ function renderSchemeGroup(kind, recKey, showHints) {
   box.appendChild(more);
 }
 
-function lineupChangesText() {
-  const changes = lineupChangePairs().map(({ inP, outP }) => `${inP.name}上，${outP.name}下`);
-  return changes.length ? `换人：${changes.join("；")}` : "换人：暂无";
-}
-
 function lineupChangePairs() {
   if (!S.myTeam || !S.subWindowLineupBase) return [];
   const base = S.subWindowLineupBase;
@@ -3275,22 +2308,6 @@ function lineupChangePairs() {
     }
   });
   return changes;
-}
-
-function renderCommandFinalPlan() {
-  if (!S.myTeam || !S.scheme[S.myTeam]) return;
-  const off = $("command-final-offense");
-  const def = $("command-final-defense");
-  const subs = $("command-final-subs");
-  const cost = $("command-final-cost");
-  const advice = selectedStaffAdvice();
-  if (off) off.textContent = `进攻：${schemeLabel("off", S.scheme[S.myTeam].off)}`;
-  if (def) def.textContent = `防守：${schemeLabel("def", S.scheme[S.myTeam].def)}`;
-  if (subs) subs.textContent = lineupChangesText();
-  if (cost) {
-    const costText = advice ? costLabel(advice.costId) : "待拍板";
-    cost.textContent = `代价：${costText}`;
-  }
 }
 
 function getSubCandidate(team, recOff) {
@@ -4245,122 +3262,6 @@ function renderCoachGrade(iWon) {
       `<span class="grade-pill">最大一波 ${st.maxMyRun}-0</span>` +
       `<span class="grade-pill">被打一波 ${st.maxOppRun}-0</span>` +
     `</div>`;
-}
-
-function commandAdviceForSession(session) {
-  const plan = session?.committedPlan || null;
-  const reads = session?.staffBriefing?.reads || [];
-  return reads.find((read) => read.adviceId === plan?.adoptedAdviceId) || null;
-}
-
-function commandDecisionText(session, advice) {
-  const plan = session?.committedPlan || null;
-  if (advice) return staffAdviceSummary(advice);
-  const parts = [];
-  (plan?.schemeChanges || []).forEach((change) => {
-    parts.push(`${change.kind === "off" ? "进攻" : "防守"}改为【${change.toName}】`);
-  });
-  if (plan?.lineupChanges?.length) {
-    parts.push(`换人：${plan.lineupChanges.map((change) => `${change.inName}上、${change.outName}下`).join("；")}`);
-  }
-  return parts.join("；") || "保留现有方案";
-}
-
-function commandResolvedWindow(plan) {
-  return (S.tactical?.resolvedAdjustmentWindows || []).find((win) => win.adjustmentId === plan?.adjustmentId) || null;
-}
-
-function commandResultText(result) {
-  if (result === "success") return "这次取舍被直播验证，方案打出了预期收益。";
-  if (result === "partial") return "这次取舍有一部分兑现，但代价也开始影响场面。";
-  if (result === "failed") return "这次取舍没有解决根本问题，后续需要再调整。";
-  return "后续反馈还不完整，先保留为下场观察点。";
-}
-
-function buildPostgameRecapItems(limit = 2) {
-  const sessions = (S.commandHistory || []).filter((session) => session?.committedPlan);
-  const items = sessions.map((session, index) => {
-    const plan = session.committedPlan;
-    const advice = commandAdviceForSession(session);
-    const resolved = commandResolvedWindow(plan);
-    const feedbackRows = Array.isArray(session.feedbackRows) ? session.feedbackRows : [];
-    const watchFor = (plan.watchFor?.length ? plan.watchFor : advice?.watchFor || []).slice(0, 3);
-    const lessonId = plan.lessonId || lessonIdForAdvice(advice);
-    const result = resolved?.result || (feedbackRows.length ? "partial" : "pending");
-    const feedbackText = feedbackRows.slice(-1)[0]?.text || commandResultText(result);
-    const score = (plan.acceptedCost ? 4 : 0) + (feedbackRows.length ? 3 : 0) +
-      (resolved ? 3 : 0) + (lessonId ? 1 : 0) + (session.by === S.myTeam ? 1 : 0);
-    return {
-      id: session.id,
-      openedAt: session.openedAt || {},
-      openedTick: session.openedAt?.tick ?? index,
-      problem: session.staffBriefing?.primaryProblemText || session.reasonText || "这次暂停处理了一段场上问题。",
-      primaryProblem: session.staffBriefing?.primaryProblem || "",
-      decision: commandDecisionText(session, advice),
-      adoptedAdviceId: plan.adoptedAdviceId || "",
-      staffRole: advice ? roleLabel(advice.role) : "",
-      acceptedCost: plan.acceptedCost || "",
-      acceptedCostText: plan.acceptedCostText || (plan.acceptedCost ? costLabel(plan.acceptedCost) : "未记录代价"),
-      watchFor,
-      watchForText: watchFor.map(watchForLabel).join("；") || "下次继续看执行质量",
-      result,
-      resultText: commandResultText(result),
-      feedbackText,
-      lessonId,
-      lessonTitle: lessonId ? TACTIC_LESSONS[lessonId]?.title || "" : "",
-      coachActionId: plan.coachActionId || "",
-      adjustmentId: plan.adjustmentId || "",
-      summaryLivecastId: plan.livecastId || "",
-      sourceLivecastIds: session.sourceLivecastIds || [],
-      sourceContextIds: session.sourceContextIds || [],
-      feedbackLivecastIds: feedbackRows.map((row) => row.livecastId).filter(Boolean),
-      score,
-    };
-  }).filter((item) => item.acceptedCost || item.feedbackLivecastIds.length || item.adoptedAdviceId);
-
-  const selected = items
-    .sort((a, b) => b.score - a.score || b.openedTick - a.openedTick)
-    .slice(0, limit)
-    .sort((a, b) => a.openedTick - b.openedTick)
-    .map(({ score, ...item }) => item);
-  S.postgameRecap = selected;
-  return selected;
-}
-
-function renderPostCoachRecap() {
-  const box = $("post-coach-recap");
-  if (!box) return;
-  const items = buildPostgameRecapItems(2);
-  if (!items.length) {
-    box.classList.add("hidden");
-    box.innerHTML = "";
-    return;
-  }
-  box.classList.remove("hidden");
-  box.innerHTML =
-    `<div class="post-recap-title">教练组复盘</div>` +
-    items.map((item, idx) => {
-      const lessonButton = item.lessonId
-        ? `<button class="post-recap-lesson" data-testid="post-recap-lesson" data-lesson-id="${item.lessonId}" type="button">看战术板</button>`
-        : "";
-      return `<div class="post-recap-item" data-testid="post-recap-item"` +
-        ` data-ai-command-session-id="${item.id}"` +
-        ` data-ai-coach-action-id="${item.coachActionId}"` +
-        ` data-ai-adjustment-id="${item.adjustmentId}"` +
-        ` data-ai-adopted-advice-id="${item.adoptedAdviceId}"` +
-        ` data-ai-accepted-cost="${item.acceptedCost}"` +
-        ` data-ai-lesson-id="${item.lessonId}"` +
-        ` data-ai-result="${item.result}">` +
-          `<div class="post-recap-head"><b>${idx + 1}. ${item.problem}</b><span>${item.result === "success" ? "兑现" : item.result === "failed" ? "付账" : "待复看"}</span></div>` +
-          `<div class="post-recap-line">你选择：${item.decision}</div>` +
-          `<div class="post-recap-line">接受代价：${item.acceptedCostText}</div>` +
-          `<div class="post-recap-feedback">${item.feedbackText}</div>` +
-          `<div class="post-recap-foot"><span>下次观察：${item.watchForText}</span>${lessonButton}</div>` +
-        `</div>`;
-    }).join("");
-  box.querySelectorAll(".post-recap-lesson").forEach((btn) => {
-    btn.onclick = () => openTacticLesson(btn.dataset.lessonId, "postgame-recap");
-  });
 }
 
 // ----------------- 单场结束 → 系列赛结算 -----------------

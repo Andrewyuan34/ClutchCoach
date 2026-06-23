@@ -34,7 +34,15 @@ Do not use `index.html`; it has intentionally been removed as an app entry.
 
 ```powershell
 node --check src/live-sim.mjs
+node --check src/features/tactic-board.mjs
+node --check src/features/command-center.mjs
+node --check src/features/livecast.mjs
+node --check src/features/postgame-recap.mjs
 node --check src/ai-verify.mjs
+node --check src/ai/dom-utils.mjs
+node --check src/ai/command-signals.mjs
+node --check src/ai/tactic-lesson-signals.mjs
+node --check src/ai/postgame-signals.mjs
 node --check src/tactical.mjs
 node --check src/state.mjs
 node --check src/utils.mjs
@@ -60,8 +68,14 @@ node tools/check-ai-contract.mjs --url='http://127.0.0.1:8000/live.html?ai_verif
 
 ```text
 src/live-sim.mjs             game flow, UI actions, livecast
+src/features/tactic-board.mjs tactic lesson modal, 5v5 action board, autoplay/scrubber
+src/features/command-center.mjs command sessions, staff reads, accepted costs, final plan traces
+src/features/livecast.mjs    feed rows, trace DOM attributes, rich/home-crowd livecast helpers
+src/features/postgame-recap.mjs postgame command recap cards and tactic lesson links
+src/ai/*.mjs                 feature-scoped snapshot helpers for the public AI verifier
 src/tactical.mjs             tactical cause layer and trace ids
 src/data/tactical-data.mjs   tactical resources
 src/ai-verify.mjs            browser verification snapshot
 tools/check-ai-contract.mjs  contract smoke check
+docs/ai-readable-structure-refactor-plan.md structure refactor execution plan
 ```

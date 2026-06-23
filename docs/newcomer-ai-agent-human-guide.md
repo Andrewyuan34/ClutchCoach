@@ -19,6 +19,7 @@ docs/command-center-ui-density-redesign.md           指挥台信息密度和第
 docs/coach-staff-livecast-learning-design.md         教练组抉择、文字直播反馈、战术学习动画方案
 docs/tactics-substitution-livecast-system.md         战术、换人、文字直播因果联动
 docs/tactics-system-resource-pack.md                 可落地资源、原因标签、反馈窗口和验证规则
+docs/ai-readable-structure-refactor-plan.md          AI 易懂项目结构优化的分阶段执行文档
 ```
 
 ## 1. 一句话启动
@@ -106,8 +107,8 @@ Agent 验证时建议走这条路径：
 9. 确认指挥台消失并自动回到文字直播。
 10. 检查文字直播只出现一条`最终布置`摘要，并且只结算最后的战术 / 换人方案。
 11. 如果打开了“助教提示”，采纳一条助教读法，确认 `最终方案` 里有具体 `代价`。
-12. 在指挥台里点击 `看战术板`，确认能打开 `团队传导` 或 `收缩护框` 的纯五人跑位战术板，并且打开后会自动播放。
-13. 拖动 `tactic-lesson-scrubber`，确认 5 个球员圆点、篮球、箭头和区域会随时间轴变化。
+12. 在指挥台里点击 `看战术板`，确认能打开 `团队传导` 或 `收缩护框` 的 5v5 动作语法战术板，并且打开后会自动播放。
+13. 拖动 `tactic-lesson-scrubber`，确认 10 个球员圆点、篮球、动作线、阶段标记和区域会随时间轴变化。
 14. 恢复比赛后等待 2-4 个回合，确认直播反馈能提到这次接受的代价或执行结果。
 15. 可以把比赛快进到终场，确认 `postgame.recap` 最多展示 2 条关键暂停，并且每条都有 `coachActionId` / `adjustmentId` / `acceptedCost`。
 16. 读取 `#ai-verification-state` 或 `window.__NBA_LIVE_VERIFY__.getState()`。
@@ -126,11 +127,12 @@ Agent 验证时建议走这条路径：
 - 采纳助教读法后，`command.commit.acceptedCost` 应存在。
 - 后续反馈出现后，`command.commit.feedbackReferencesAcceptedCost` 应为 `true`。
 - `tacticLessons.available` 应包含 `motion` 和 `paint`。
-- 打开战术板时，`tacticLessons.currentLesson.pureAnimation` 应为 `true`，`personnel` 应为 `5`。
-- `tacticLessons.currentLesson.board.actorCount` 应等于 `5`。
-- `tacticLessons.currentLesson.board.actors[]` 应能读到 5 名球员的当前 DOM 坐标，拖动进度条后至少一名球员坐标应变化。
+- 打开战术板时，`tacticLessons.currentLesson.pureAnimation` 应为 `true`，`personnel` 应为 `10`，`primaryPersonnel` 应为 `5`。
+- `tacticLessons.currentLesson.system` 应等于 `five-v-five-action-motion-v2`；`board.actorCount` 应等于 `10`，且 `sideCounts.offense` / `sideCounts.defense` 都应等于 `5`。
+- `tacticLessons.currentLesson.board.primaryActorCount` 和 `contextActorCount` 都应等于 `5`。
+- `tacticLessons.currentLesson.board.actors[]` 应能读到 10 名球员的当前 DOM 坐标，拖动进度条后主体和对抗方都应有球员坐标变化。
 - `tacticLessons.currentLesson.board.ball` 应存在，且 `ballTransfers` 应大于等于 `1`。
-- `window.__NBA_LIVE_VERIFY__.sampleTacticLessonMotion("motion")` 应返回 `maxActorTravel`、`ballHolders` 和多个采样帧。
+- `window.__NBA_LIVE_VERIFY__.sampleTacticLessonMotion("motion")` 应返回 `maxActorTravel`、`ballHolders`、`actionTypes`、`activeActions`、`beatPhase` 和多个采样帧。
 - `lesson.watchfor_used_by_feedback` 应通过，表示战术板观察点和直播反馈使用同一套标签。
 - `postgame.recap.traceable_when_present` 应通过，表示赛后复盘不是孤立文案，而是能追溯到暂停、助教读法和直播证据。
 - 暂停期间多次点击战术，不应立即增加多个正式调整窗口。
@@ -154,7 +156,15 @@ node tools/check-ai-contract.mjs --url='http://127.0.0.1:8000/live.html?ai_verif
 
 ```powershell
 node --check src/live-sim.mjs
+node --check src/features/tactic-board.mjs
+node --check src/features/command-center.mjs
+node --check src/features/livecast.mjs
+node --check src/features/postgame-recap.mjs
 node --check src/ai-verify.mjs
+node --check src/ai/dom-utils.mjs
+node --check src/ai/command-signals.mjs
+node --check src/ai/tactic-lesson-signals.mjs
+node --check src/ai/postgame-signals.mjs
 node --check src/tactical.mjs
 node --check src/state.mjs
 node --check src/utils.mjs
@@ -205,6 +215,11 @@ node --check tools/check-ai-contract.mjs
 ```text
 live.html                         页面入口和主要 DOM 锚点
 src/live-sim.mjs                  比赛流程、按钮交互、直播、指挥台
+src/features/tactic-board.mjs     战术板弹层、5v5 action 动画、播放/拖动
+src/features/command-center.mjs   指挥台会话、助教建议、代价、观察点、最终方案追踪
+src/features/livecast.mjs         文字直播行、trace DOM、前四场语境、主场氛围文本
+src/features/postgame-recap.mjs   赛后指挥复盘卡、trace 字段、战术板回看入口
+src/ai/*.mjs                      AI 快照的功能域 helper，按指挥台/战术板/赛后复盘拆分
 src/tactical.mjs                  战术因果、调整窗口、trace、AI debug
 src/data/tactical-data.mjs        球员战术特征、战术适配、对手反制
 src/ai-verify.mjs                 AI 原生验证快照和断言
