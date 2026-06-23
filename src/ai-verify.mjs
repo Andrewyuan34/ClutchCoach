@@ -1,7 +1,7 @@
-import { ROSTERS } from "./data/commentary-data.mjs?v=tactic-timeline-30";
-import { TACTIC_LESSONS } from "./data/tactical-data.mjs?v=tactic-timeline-30";
-import { S } from "./state.mjs?v=tactic-timeline-30";
-import { compactTacticalState } from "./tactical.mjs?v=tactic-timeline-30";
+import { ROSTERS } from "./data/commentary-data.mjs?v=five-motion-31";
+import { TACTIC_LESSONS } from "./data/tactical-data.mjs?v=five-motion-31";
+import { S } from "./state.mjs?v=five-motion-31";
+import { compactTacticalState } from "./tactical.mjs?v=five-motion-31";
 
 export const AI_VERIFY_CONTRACT = Object.freeze({
   protocol: "nba-live-ai-verification",
@@ -67,10 +67,6 @@ export const AI_VERIFY_CONTRACT = Object.freeze({
     "tactic-lesson-board",
     "tactic-lesson-scrubber",
     "tactic-lesson-time",
-    "tactic-lesson-frame-text",
-    "tactic-lesson-tags",
-    "tactic-lesson-prev",
-    "tactic-lesson-next",
     "tactic-lesson-autoplay",
     "tactic-lesson-close",
     "ai-verification-state",
@@ -469,18 +465,18 @@ function buildAssertions() {
       details: `missing=${lessonSignals.lessons.filter((lesson) => !lesson.risks.length).map((lesson) => lesson.lessonId).join(",") || "none"}.`,
     },
     {
-      id: "lesson.frame_count_minimum",
-      pass: lessonSignals.lessons.every((lesson) => lesson.frameCount >= 3),
-      details: lessonSignals.lessons.map((lesson) => `${lesson.lessonId}:${lesson.frameCount}`).join(","),
-    },
-    {
       id: "lesson.timeline.present",
-      pass: lessonSignals.lessons.every((lesson) => lesson.timeline.durationMs > 0 && lesson.timeline.actorCount >= 5),
+      pass: lessonSignals.lessons.every((lesson) => lesson.timeline.durationMs > 0 && lesson.timeline.actorCount === 5),
       details: lessonSignals.lessons.map((lesson) => `${lesson.lessonId}:${lesson.timeline.durationMs}ms/${lesson.timeline.actorCount}actors`).join(","),
     },
     {
+      id: "lesson.timeline.pure_five_player_system",
+      pass: lessonSignals.lessons.every((lesson) => lesson.timeline.pureAnimation && lesson.timeline.personnel === 5 && lesson.timeline.subject && lesson.timeline.trackedActorCount === 5),
+      details: lessonSignals.lessons.map((lesson) => `${lesson.lessonId}:pure=${lesson.timeline.pureAnimation}/personnel=${lesson.timeline.personnel}/tracks=${lesson.timeline.trackedActorCount}/subject=${lesson.timeline.subject}`).join(","),
+    },
+    {
       id: "lesson.timeline.moving_actors",
-      pass: lessonSignals.lessons.every((lesson) => lesson.timeline.movingActorCount >= 3),
+      pass: lessonSignals.lessons.every((lesson) => lesson.timeline.movingActorCount === 5),
       details: lessonSignals.lessons.map((lesson) => `${lesson.lessonId}:${lesson.timeline.movingActorCount}`).join(","),
     },
     {
@@ -501,12 +497,14 @@ function buildAssertions() {
     {
       id: "lesson.modal.renders_timeline",
       pass: !lessonSignals.visible || (
-        lessonSignals.currentLesson?.board.actorCount >= lessonSignals.currentLesson?.actorCount &&
+        lessonSignals.currentLesson?.board.actorCount === 5 &&
         lessonSignals.currentLesson?.board.ballPresent &&
-        lessonSignals.currentLesson?.board.scrubberMax >= lessonSignals.currentLesson?.durationMs
+        lessonSignals.currentLesson?.board.scrubberMax >= lessonSignals.currentLesson?.durationMs &&
+        lessonSignals.currentLesson?.board.pureAnimation &&
+        lessonSignals.currentLesson?.board.personnel === 5
       ),
       details: lessonSignals.currentLesson
-        ? `visible=${lessonSignals.visible}, actors=${lessonSignals.currentLesson.board.actorCount}/${lessonSignals.currentLesson.actorCount}, ball=${lessonSignals.currentLesson.board.ballPresent}, scrubber=${lessonSignals.currentLesson.board.scrubberValue}/${lessonSignals.currentLesson.board.scrubberMax}`
+        ? `visible=${lessonSignals.visible}, actors=${lessonSignals.currentLesson.board.actorCount}/${lessonSignals.currentLesson.actorCount}, ball=${lessonSignals.currentLesson.board.ballPresent}, scrubber=${lessonSignals.currentLesson.board.scrubberValue}/${lessonSignals.currentLesson.board.scrubberMax}, pure=${lessonSignals.currentLesson.board.pureAnimation}`
         : `visible=${lessonSignals.visible}`,
     },
     {
@@ -614,8 +612,13 @@ function tacticLessonSignals() {
     watchFor: clone(lesson.watchFor || []),
     frameCount: beatCount(lesson),
     timeline: {
+      system: lessonTimeline(lesson)?.system || "",
+      pureAnimation: !!lessonTimeline(lesson)?.pureAnimation,
+      personnel: Number(lessonTimeline(lesson)?.personnel || 0),
+      subject: lessonTimeline(lesson)?.subject || "",
       durationMs: lessonTimeline(lesson)?.durationMs || 0,
       actorCount: lessonTimeline(lesson)?.actors?.length || 0,
+      trackedActorCount: Object.keys(lessonTimeline(lesson)?.tracks || {}).length,
       movingActorCount: movingActorCount(lesson),
       maxActorTravel: timelineMaxActorTravel(lesson),
       ballTransfers: Math.max(0, (lessonTimeline(lesson)?.ball?.length || 1) - 1),
@@ -638,6 +641,9 @@ function tacticLessonSignals() {
       playheadMs: Number(modal?.dataset.aiPlayheadMs || S.tacticLesson?.playheadMs || 0),
       durationMs: Number(modal?.dataset.aiDurationMs || current.timeline?.durationMs || 0),
       actorCount: Number(modal?.dataset.aiTimelineActors || current.timeline?.actors?.length || 0),
+      pureAnimation: modal?.dataset.aiPureAnimation === "true" || !!current.timeline?.pureAnimation,
+      personnel: Number(modal?.dataset.aiPersonnel || current.timeline?.personnel || 0),
+      subject: modal?.dataset.aiSubject || current.timeline?.subject || "",
       movingActorCount: Number(modal?.dataset.aiMovingActors || movingActorCount(current)),
       ballTransfers: Number(modal?.dataset.aiBallTransfers || Math.max(0, (current.timeline?.ball?.length || 1) - 1)),
       costPath: clone((modal?.dataset.aiCostPath || "").split(/\s+/).filter(Boolean)),
@@ -660,6 +666,8 @@ function boardLessonDomSignals(modal) {
     playheadMs: Number(board?.dataset.aiPlayheadMs || 0),
     durationMs: Number(board?.dataset.aiDurationMs || 0),
     actorCount: actorEls.length,
+    personnel: Number(board?.dataset.aiPersonnel || 0),
+    pureAnimation: board?.dataset.aiPureAnimation === "true",
     activeArrows: Number(board?.dataset.aiActiveArrows || board?.querySelectorAll(".board-arrow").length || 0),
     activeZones: Number(board?.dataset.aiActiveZones || board?.querySelectorAll(".board-zone").length || 0),
     ballPresent: !!ballEl,
@@ -668,11 +676,13 @@ function boardLessonDomSignals(modal) {
     actors: actorEls.map((el) => ({
       id: el.dataset.aiActorId || "",
       side: el.dataset.aiSide || "",
+      role: el.dataset.aiRole || "",
       x: Number(el.dataset.aiX || parsePercent(el.style.left)),
       y: Number(el.dataset.aiY || parsePercent(el.style.top)),
     })),
     ball: ballEl ? {
       holder: ballEl.dataset.aiHolder || "",
+      label: ballEl.dataset.aiLabel || "",
       x: Number(ballEl.dataset.aiX || parsePercent(ballEl.style.left)),
       y: Number(ballEl.dataset.aiY || parsePercent(ballEl.style.top)),
     } : null,

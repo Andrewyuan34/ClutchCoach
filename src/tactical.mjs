@@ -1,12 +1,12 @@
-import { ROSTERS, OFF_SCHEMES, DEF_SCHEMES, MATCHUP } from "./data/commentary-data.mjs?v=tactic-timeline-30";
+import { ROSTERS, OFF_SCHEMES, DEF_SCHEMES, MATCHUP } from "./data/commentary-data.mjs?v=five-motion-31";
 import {
   ADAPTATION_RULES,
   CAUSE_TEMPLATES,
   SCHEME_REQUIREMENTS,
   TACTICAL_TRAITS,
   TRAIT_KEYS,
-} from "./data/tactical-data.mjs?v=tactic-timeline-30";
-import { S } from "./state.mjs?v=tactic-timeline-30";
+} from "./data/tactical-data.mjs?v=five-motion-31";
+import { S } from "./state.mjs?v=five-motion-31";
 
 const HISTORY_LIMIT = 12;
 const TRACE_LIMIT = 40;

@@ -111,10 +111,6 @@ tactic-lesson-intent
 tactic-lesson-board
 tactic-lesson-scrubber
 tactic-lesson-time
-tactic-lesson-frame-text
-tactic-lesson-tags
-tactic-lesson-prev
-tactic-lesson-next
 tactic-lesson-autoplay
 tactic-lesson-close
 ai-verification-state
@@ -169,9 +165,9 @@ player-bench-mcbride
 - If the player adopts a staff read, the final plan exposes the accepted cost before continuing.
 - A committed command window writes one traceable `最终布置` livecast summary instead of replaying every draft click.
 - A committed staff read carries `adoptedAdviceId`, `acceptedCost`, and follow-up feedback rows that can reference the accepted cost.
-- The tactic lesson board exposes `motion` and `paint`, each with intent, risks, watch points, and at least 3 timeline beats.
-- Each tactic lesson has a timeline duration, actor list, moving actor tracks, ball transfers, active arrows / zones, and a cost path that overlaps its `watchFor` tags.
-- When a tactic lesson modal is open, the rendered board must contain actor coordinates, a ball marker, and a scrubber synced to the timeline.
+- The tactic lesson board exposes `motion` and `paint` as pure five-player animation systems.
+- Each tactic lesson has exactly 5 rendered actors, 5 tracked actors, a `five-player-motion-v1` system id, timeline duration, ball motion, active arrows / zones, and a cost path that overlaps its `watchFor` tags.
+- When a tactic lesson modal is open, the rendered board must contain exactly 5 actor coordinates, a ball marker, and a scrubber synced to the timeline.
 - If a committed tradeoff links to a tactic lesson, the committed `watchFor` tags overlap that lesson's `watchFor` tags.
 - Tactical state exists once the verifier is initialized.
 - Selected-team lineup profiles exist after a team/game is active.
@@ -188,6 +184,9 @@ visible
 currentLesson.playheadMs
 currentLesson.durationMs
 currentLesson.actorCount
+currentLesson.pureAnimation
+currentLesson.personnel
+currentLesson.subject
 currentLesson.movingActorCount
 currentLesson.ballTransfers
 currentLesson.costPath
@@ -196,10 +195,14 @@ currentLesson.board.ball
 currentLesson.board.activeArrows
 currentLesson.board.activeZones
 currentLesson.motionProbe
+lessons[].timeline.system
+lessons[].timeline.pureAnimation
+lessons[].timeline.personnel
+lessons[].timeline.trackedActorCount
 lessons[].timeline.maxActorTravel
 ```
 
-`currentLesson.board.actors[]` contains `id`, `side`, `x`, and `y`, read from the live DOM. `currentLesson.board.ball` contains the current holder and position. This lets an agent drag `tactic-lesson-scrubber`, call `getState()` again, and prove the visible board moved.
+`currentLesson.board.actors[]` contains `id`, `side`, `role`, `x`, and `y`, read from the live DOM. `currentLesson.board.ball` contains the current holder or free-ball label plus position. This lets an agent drag `tactic-lesson-scrubber`, call `getState()` again, and prove the visible five-player board moved.
 
 For data-only checks, call:
 
@@ -303,12 +306,18 @@ openedLessonId
 visible
 watched
 currentLesson.id
-currentLesson.frameIndex
-currentLesson.frameCount
+currentLesson.pureAnimation
+currentLesson.personnel
+currentLesson.subject
+currentLesson.playheadMs
+currentLesson.durationMs
+currentLesson.board.actorCount
+currentLesson.board.actors[]
+currentLesson.board.ball
 currentLesson.needs
 currentLesson.risks
 currentLesson.watchFor
-lessons[].intent / risks / watchFor / frameCount
+lessons[].intent / risks / watchFor / timeline
 ```
 
 This verifies that tactic learning stays optional: no live-play modal is required, and no tactic receives a numeric boost from being watched.

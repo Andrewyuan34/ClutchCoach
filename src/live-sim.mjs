@@ -24,12 +24,12 @@ import {
   DEF_BASE,
   MATCHUP,
   SCHEME_FLAVOR,
-} from "./data/commentary-data.mjs?v=tactic-timeline-30";
-import { SERIES_PBP_LIBRARY, SERIES_ATMOSPHERE } from "./data/series-pbp-data.mjs?v=tactic-timeline-30";
-import { S, QUARTERS, QUARTER_SECONDS, HOME_BY_GAME, STAT_KEYS, CLUTCH_MAP } from "./state.mjs?v=tactic-timeline-30";
-import { $, rand, clamp, fill } from "./utils.mjs?v=tactic-timeline-30";
-import { initAiVerification, installAiDeterminism, syncAiVerification } from "./ai-verify.mjs?v=tactic-timeline-30";
-import { TACTIC_LESSONS } from "./data/tactical-data.mjs?v=tactic-timeline-30";
+} from "./data/commentary-data.mjs?v=five-motion-31";
+import { SERIES_PBP_LIBRARY, SERIES_ATMOSPHERE } from "./data/series-pbp-data.mjs?v=five-motion-31";
+import { S, QUARTERS, QUARTER_SECONDS, HOME_BY_GAME, STAT_KEYS, CLUTCH_MAP } from "./state.mjs?v=five-motion-31";
+import { $, rand, clamp, fill } from "./utils.mjs?v=five-motion-31";
+import { initAiVerification, installAiDeterminism, syncAiVerification } from "./ai-verify.mjs?v=five-motion-31";
+import { TACTIC_LESSONS } from "./data/tactical-data.mjs?v=five-motion-31";
 import {
   addCause,
   createAdjustmentWindow,
@@ -44,7 +44,7 @@ import {
   traceForContext,
   updateOpponentAdaptation,
   noteOpponentAdaptationLivecast,
-} from "./tactical.mjs?v=tactic-timeline-30";
+} from "./tactical.mjs?v=five-motion-31";
 
 installAiDeterminism();
 
@@ -119,8 +119,6 @@ function startApp() {
   if ($("command-recent-toggle")) $("command-recent-toggle").onclick = () => toggleCommandExpand("recent");
   if ($("command-lineup-more")) $("command-lineup-more").onclick = () => toggleCommandExpand("lineup");
   if ($("tactic-lesson-close")) $("tactic-lesson-close").onclick = () => closeTacticLesson();
-  if ($("tactic-lesson-prev")) $("tactic-lesson-prev").onclick = () => stepTacticLesson(-1);
-  if ($("tactic-lesson-next")) $("tactic-lesson-next").onclick = () => stepTacticLesson(1);
   if ($("tactic-lesson-autoplay")) $("tactic-lesson-autoplay").onclick = () => toggleTacticLessonAuto();
   if ($("tactic-lesson-scrubber")) $("tactic-lesson-scrubber").oninput = (e) => seekTacticLesson(Number(e.target.value || 0));
   if ($("coach-prompt")) $("coach-prompt").onclick = () => {
@@ -990,6 +988,7 @@ function openTacticLesson(lessonId, openedFrom = "scheme-card") {
   };
   markTacticLessonFrame(lessonId, 0);
   renderTacticLessonModal();
+  toggleTacticLessonAuto({ sync: false });
   syncAiVerification(`lesson:open:${lessonId}`);
 }
 
@@ -1031,13 +1030,13 @@ function seekTacticLesson(ms) {
   syncAiVerification(`lesson:seek:${state.lessonId}:${Math.round(state.playheadMs)}`);
 }
 
-function toggleTacticLessonAuto() {
+function toggleTacticLessonAuto({ sync = true } = {}) {
   const state = S.tacticLesson;
   if (!state) return;
   if (state.autoPlaying) {
     stopTacticLessonAuto();
     renderTacticLessonModal();
-    syncAiVerification("lesson:auto:off");
+    if (sync) syncAiVerification("lesson:auto:off");
     return;
   }
   const lesson = TACTIC_LESSONS[state.lessonId];
@@ -1051,7 +1050,7 @@ function toggleTacticLessonAuto() {
   state.lastSyncAt = state.lastAutoAt;
   renderTacticLessonModal();
   tacticLessonRaf = requestAnimationFrame(tickTacticLessonAuto);
-  syncAiVerification("lesson:auto:on");
+  if (sync) syncAiVerification("lesson:auto:on");
 }
 
 function stopTacticLessonAuto() {
@@ -1080,10 +1079,20 @@ function tickTacticLessonAuto(now) {
     syncAiVerification(`lesson:auto:tick:${state.lessonId}:${Math.round(state.playheadMs)}`);
   }
   if (state.playheadMs >= duration) {
-    stopTacticLessonAuto();
-    renderTacticLessonModal();
-    syncAiVerification(`lesson:auto:complete:${state.lessonId}`);
-    return;
+    if (lesson.timeline?.loop) {
+      state.playheadMs = 0;
+      state.frameIndex = 0;
+      state.lastAutoAt = now;
+      state.lastSyncAt = now;
+      markTacticLessonFrame(state.lessonId, 0);
+      renderTacticLessonModal();
+      syncAiVerification(`lesson:auto:loop:${state.lessonId}`);
+    } else {
+      stopTacticLessonAuto();
+      renderTacticLessonModal();
+      syncAiVerification(`lesson:auto:complete:${state.lessonId}`);
+      return;
+    }
   }
   tacticLessonRaf = requestAnimationFrame(tickTacticLessonAuto);
 }
@@ -1131,16 +1140,21 @@ function renderTacticLessonModal() {
   modal.dataset.aiMovingActors = String(countMovingActors(lesson));
   modal.dataset.aiBallTransfers = String(Math.max(0, (lesson.timeline?.ball?.length || 1) - 1));
   modal.dataset.aiCostPath = (lesson.timeline?.costPath || []).join(" ");
+  modal.dataset.aiPureAnimation = String(!!lesson.timeline?.pureAnimation);
+  modal.dataset.aiPersonnel = String(lesson.timeline?.personnel || lesson.timeline?.actors?.length || 0);
+  modal.dataset.aiSubject = lesson.timeline?.subject || "";
   modal.dataset.aiWatchFor = lesson.watchFor.join(" ");
   modal.dataset.aiOpenedFrom = state.openedFrom || "";
-  if ($("tactic-lesson-title")) $("tactic-lesson-title").textContent = `${lesson.title} · ${beat.label || frame.label}`;
-  if ($("tactic-lesson-intent")) $("tactic-lesson-intent").textContent = `意图：${lesson.intent}`;
+  if ($("tactic-lesson-title")) $("tactic-lesson-title").textContent = lesson.title;
+  if ($("tactic-lesson-intent")) $("tactic-lesson-intent").textContent = `${beat.label || frame.label} · ${beat.text || frame.text}`;
   const board = $("tactic-lesson-board");
   if (board) {
     board.innerHTML = renderTacticBoard(lesson, playhead);
     board.dataset.aiPlayheadMs = String(Math.round(playhead));
     board.dataset.aiDurationMs = String(duration);
     board.dataset.aiTimelineActors = String(lesson.timeline?.actors?.length || 0);
+    board.dataset.aiPersonnel = String(lesson.timeline?.personnel || lesson.timeline?.actors?.length || 0);
+    board.dataset.aiPureAnimation = String(!!lesson.timeline?.pureAnimation);
     board.dataset.aiActiveArrows = String((lesson.timeline?.arrows || []).filter((arrow) => playhead >= arrow.tStart && playhead <= arrow.tEnd).length);
     board.dataset.aiActiveZones = String((lesson.timeline?.zones || []).filter((zone) => playhead >= zone.tStart && playhead <= zone.tEnd).length);
     board.dataset.aiBallTransfers = String(Math.max(0, (lesson.timeline?.ball?.length || 1) - 1));
@@ -1151,21 +1165,7 @@ function renderTacticLessonModal() {
     scrub.value = String(Math.round(playhead));
   }
   if ($("tactic-lesson-time")) $("tactic-lesson-time").textContent = `${(playhead / 1000).toFixed(1)}s / ${(duration / 1000).toFixed(1)}s`;
-  if ($("tactic-lesson-frame-text")) {
-    $("tactic-lesson-frame-text").innerHTML =
-      `<b>${frame.title}</b><span>${beat.text || frame.text}</span><em>观察点：${frame.focus}</em>`;
-  }
-  if ($("tactic-lesson-tags")) {
-    $("tactic-lesson-tags").innerHTML =
-      `<span>需要：${lesson.needs.join(" / ")}</span>` +
-      `<span>风险：${lesson.risks.join(" / ")}</span>` +
-      `<span>直播观察：${lesson.watchFor.join(" / ")}</span>`;
-  }
-  const prev = $("tactic-lesson-prev");
-  const next = $("tactic-lesson-next");
   const auto = $("tactic-lesson-autoplay");
-  if (prev) prev.disabled = index <= 0;
-  if (next) next.disabled = index >= beats.length - 1;
   if (auto) auto.textContent = state.autoPlaying ? "暂停" : (playhead >= duration - 30 ? "重播跑位" : "播放跑位");
 }
 
@@ -1214,12 +1214,14 @@ function renderTacticBoard(lesson, playhead) {
   const arrows = (timeline.arrows || []).filter((arrow) => playhead >= arrow.tStart && playhead <= arrow.tEnd).map((arrow) => boardArrow(arrow, positions, playhead)).join("");
   const players = timeline.actors.map((actor) => boardPiece({ ...actor, ...(positions[actor.id] || { x: 50, y: 50 }) })).join("");
   const ball = boardBall(lesson, playhead, positions);
+  const trails = timeline.actors.map((actor) => boardTrail(actor, timeline.tracks?.[actor.id])).join("");
   return `
     <div class="half-court">
       <div class="court-paint"></div>
       <div class="court-rim"></div>
       <div class="court-arc"></div>
       ${zones}
+      ${trails}
       ${arrows}
       ${players}
       ${ball}
@@ -1263,7 +1265,7 @@ function interpolateTrack(track, playhead) {
 }
 
 function boardPiece(piece) {
-  return `<span class="board-piece ${piece.side || ""}" data-ai-actor-id="${piece.id || ""}" data-ai-side="${piece.side || ""}" data-ai-x="${roundBoardValue(piece.x)}" data-ai-y="${roundBoardValue(piece.y)}" style="left:${piece.x}%;top:${piece.y}%">${piece.label}</span>`;
+  return `<span class="board-piece ${piece.side || ""}" data-ai-actor-id="${piece.id || ""}" data-ai-side="${piece.side || ""}" data-ai-role="${piece.role || ""}" data-ai-x="${roundBoardValue(piece.x)}" data-ai-y="${roundBoardValue(piece.y)}" style="left:${piece.x}%;top:${piece.y}%"><b>${piece.label}</b><em>${piece.role || ""}</em></span>`;
 }
 
 function boardBall(lesson, playhead, positions) {
@@ -1271,20 +1273,20 @@ function boardBall(lesson, playhead, positions) {
   if (!events.length) return "";
   let current = events[0], next = null;
   for (let i = 0; i < events.length; i++) {
-    if (events[i].t <= playhead) {
+    if ((events[i].t || 0) <= playhead) {
       current = events[i];
       next = events[i + 1] || null;
     }
   }
-  const from = positions[current.holder] || { x: 50, y: 50 };
+  const from = current.holder ? (positions[current.holder] || { x: 50, y: 50 }) : { x: current.x || 50, y: current.y || 50 };
   let pos = from;
   const passWindow = next ? Math.min(520, Math.max(220, next.t - current.t)) : 0;
   if (next && playhead >= next.t - passWindow) {
-    const to = positions[next.holder] || from;
+    const to = next.holder ? (positions[next.holder] || from) : { x: next.x || from.x, y: next.y || from.y };
     const k = (playhead - (next.t - passWindow)) / Math.max(1, passWindow);
     pos = { x: from.x + (to.x - from.x) * clamp(k, 0, 1), y: from.y + (to.y - from.y) * clamp(k, 0, 1) };
   }
-  return `<span class="board-ball" data-ai-ball="true" data-ai-holder="${current.holder || ""}" data-ai-x="${roundBoardValue(pos.x)}" data-ai-y="${roundBoardValue(pos.y)}" style="left:${pos.x}%;top:${pos.y}%"></span>`;
+  return `<span class="board-ball" data-ai-ball="true" data-ai-holder="${current.holder || ""}" data-ai-label="${current.label || ""}" data-ai-x="${roundBoardValue(pos.x)}" data-ai-y="${roundBoardValue(pos.y)}" style="left:${pos.x}%;top:${pos.y}%"></span>`;
 }
 
 function tacticZone(zone) {
@@ -1302,6 +1304,12 @@ function boardArrow(arrow, positions = null, playhead = 0) {
   const window = Math.max(1, (arrow.tEnd || playhead + 1) - (arrow.tStart || playhead));
   const progress = positions ? clamp((playhead - arrow.tStart) / window, 0.25, 1) : 1;
   return `<i class="board-arrow ${arrow.type || ""}" data-ai-arrow-type="${arrow.type || ""}" data-ai-x1="${roundBoardValue(x1)}" data-ai-y1="${roundBoardValue(y1)}" data-ai-x2="${roundBoardValue(x2)}" data-ai-y2="${roundBoardValue(y2)}" style="left:${x1}%;top:${y1}%;width:${length * progress}%;transform:rotate(${angle}deg)"><span>${arrow.label || ""}</span></i>`;
+}
+
+function boardTrail(actor, track) {
+  if (!Array.isArray(track) || track.length < 2) return "";
+  const points = track.slice().sort((a, b) => a.t - b.t).map((point) => `${roundBoardValue(point.x)},${roundBoardValue(point.y)}`).join(" ");
+  return `<svg class="board-trail" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polyline class="${actor.side || ""}" points="${points}" data-ai-trail-actor="${actor.id || ""}" /></svg>`;
 }
 
 function boardPoint(ref, positions = null) {

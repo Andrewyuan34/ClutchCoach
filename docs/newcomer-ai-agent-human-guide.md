@@ -106,8 +106,8 @@ Agent 验证时建议走这条路径：
 9. 确认指挥台消失并自动回到文字直播。
 10. 检查文字直播只出现一条`最终布置`摘要，并且只结算最后的战术 / 换人方案。
 11. 如果打开了“助教提示”，采纳一条助教读法，确认 `最终方案` 里有具体 `代价`。
-12. 在指挥台里点击 `看战术板`，确认能打开 `团队传导` 或 `收缩护框` 的时间轴战术板，并能前进 / 后退 / 播放跑位。
-13. 拖动 `tactic-lesson-scrubber`，确认球员圆点、篮球、箭头和区域会随时间轴变化。
+12. 在指挥台里点击 `看战术板`，确认能打开 `团队传导` 或 `收缩护框` 的纯五人跑位战术板，并且打开后会自动播放。
+13. 拖动 `tactic-lesson-scrubber`，确认 5 个球员圆点、篮球、箭头和区域会随时间轴变化。
 14. 恢复比赛后等待 2-4 个回合，确认直播反馈能提到这次接受的代价或执行结果。
 15. 可以把比赛快进到终场，确认 `postgame.recap` 最多展示 2 条关键暂停，并且每条都有 `coachActionId` / `adjustmentId` / `acceptedCost`。
 16. 读取 `#ai-verification-state` 或 `window.__NBA_LIVE_VERIFY__.getState()`。
@@ -126,8 +126,9 @@ Agent 验证时建议走这条路径：
 - 采纳助教读法后，`command.commit.acceptedCost` 应存在。
 - 后续反馈出现后，`command.commit.feedbackReferencesAcceptedCost` 应为 `true`。
 - `tacticLessons.available` 应包含 `motion` 和 `paint`。
-- 打开战术板时，`tacticLessons.currentLesson.frameCount` 应至少为 `3`，`durationMs` 应大于 `0`。
-- `tacticLessons.currentLesson.board.actors[]` 应能读到当前 DOM 坐标，拖动进度条后至少一名球员坐标应变化。
+- 打开战术板时，`tacticLessons.currentLesson.pureAnimation` 应为 `true`，`personnel` 应为 `5`。
+- `tacticLessons.currentLesson.board.actorCount` 应等于 `5`。
+- `tacticLessons.currentLesson.board.actors[]` 应能读到 5 名球员的当前 DOM 坐标，拖动进度条后至少一名球员坐标应变化。
 - `tacticLessons.currentLesson.board.ball` 应存在，且 `ballTransfers` 应大于等于 `1`。
 - `window.__NBA_LIVE_VERIFY__.sampleTacticLessonMotion("motion")` 应返回 `maxActorTravel`、`ballHolders` 和多个采样帧。
 - `lesson.watchfor_used_by_feedback` 应通过，表示战术板观察点和直播反馈使用同一套标签。

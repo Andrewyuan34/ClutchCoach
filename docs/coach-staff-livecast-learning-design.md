@@ -782,18 +782,20 @@ MVP 只需要三类反馈：
 | 收缩护框 | 收益和代价最直观：堵禁区 vs 放底角 |
 | 团队传导 | 能解释“为什么需要第二持球点”和“弱侧空位” |
 
-每个战术板 MVP 只需要 3 帧：
+每个战术板从 MVP 讲解帧升级为纯五人动画系统：
 
-| 帧 | 内容 |
+| 要素 | 内容 |
 | --- | --- |
-| 问题 | 对手如何制造压力 |
-| 解法 | 这个战术如何解决 |
-| 代价 | 对手可能如何惩罚 |
+| 人员 | 只渲染本方 5 人，防守战术也只看我方五人轮转 |
+| 时间轴 | 用 `playheadMs` 连续推进，不做教程式切帧 |
+| 篮球 | 作为独立对象在持球人或目标区域之间移动 |
+| 空间 | 箭头和区域只辅助表达路线、收益、代价 |
+| 验证 | AI 必须能读到 5 个 DOM 坐标和球的位置 |
 
 实现修订：
 
-当前版本把“三帧讲解”升级为“时间轴跑位”。
-语义上仍保留问题 / 解法 / 代价这些节点，但球员、篮球、箭头、风险区域会随 `playheadMs` 连续移动。玩家可以点上一步 / 下一步跳到节点，也可以播放跑位或拖动进度条观察细节。
+当前版本把“三帧讲解”升级为“纯五人时间轴跑位”。
+语义节点仍可用于 AI 和辅助文案，但玩家主要看到的是 5 名球员、篮球、箭头、风险区域随 `playheadMs` 连续移动。战术板打开后默认播放，玩家可以暂停或拖动进度条观察细节。
 
 如果这 2 个战术板不能让玩家更理解暂停选择，就不要继续扩到 6 个。
 
@@ -1178,7 +1180,11 @@ tacticLessons: {
   watched: { motion: true },
   currentLesson: {
     id: "motion",
-    frameCount: 5,
+    pureAnimation: true,
+    personnel: 5,
+    playheadMs: 0,
+    durationMs: 6400,
+    board: { actorCount: 5 },
     needs: [],
     risks: [],
     watchFor: []
@@ -1198,8 +1204,8 @@ staff.commit.records_accepted_cost
 staff.feedback.references_committed_tradeoff
 lesson.every_scheme_has_intent
 lesson.every_scheme_has_risks
-lesson.frame_count_minimum
 lesson.timeline.present
+lesson.timeline.pure_five_player_system
 lesson.timeline.moving_actors
 lesson.timeline.motion_distance
 lesson.timeline.ball_transfers
@@ -1281,7 +1287,7 @@ command.feedback.explain_rows_lte_two
 
 - 第一版只做 2 个核心战术。
 - 用 2D 战术板，不做复杂人物动画。
-- 每个战术 3 帧，复用球员圆点、箭头、区域高亮。
+- 每个战术使用 `five-player-motion-v1`，只渲染本方 5 人，复用球员圆点、球、路线、箭头、区域高亮。
 - 动画数据结构驱动，避免每个战术手写 DOM。
 
 ### 11.5 风险：懂战术的人更强，不懂的人被劝退
@@ -1487,7 +1493,7 @@ command.feedback.explain_rows_lte_two
 - 新增 2D 半场战术板组件。
 - 新增 `TACTIC_LESSONS` 数据。
 - 先做 `收缩护框` 和 `团队传导`。
-- 每个战术用时间轴表达跑位，保留问题、解法、代价三个以上的语义节点。
+- 每个战术用纯五人时间轴表达跑位，语义节点只用于说明和 AI 追溯。
 - 指挥台战术卡片加入“看战术板”入口。
 
 首批战术：
@@ -1500,7 +1506,7 @@ command.feedback.explain_rows_lte_two
 验收：
 
 ```text
-玩家能从战术板看到意图、需求、风险、观察点，并能看见球员和球按时间轴移动。
+玩家能从战术板直接看见五人站位、跑位、球流转和空间代价。
 动画不阻塞正常比赛。
 看过动画后，玩家能更准确理解对应直播反馈。
 ```
@@ -1561,13 +1567,13 @@ command.feedback.explain_rows_lte_two
 | 教练组意见布局 | 需要移动端第一屏方案 |
 | 采纳 / 查看依据交互 | 需要按钮层级设计 |
 | 战术板弹层 | 需要 2D 半场画布或 DOM 方案 |
-| 战术动画控制 | 上一步 / 下一步 / 播放跑位 / 拖动进度 |
+| 战术动画控制 | 播放 / 暂停 / 拖动进度 |
 
 当前实现补充：
 
 - 移动端第一屏已采用“暂停简报 + 本次取舍 + 最终方案 + 模式切换”的压缩结构。
-- 战术板弹层已用 DOM 半场实现，并支持上一步、下一步、播放跑位、拖动进度条。
-- 战术板 DOM 已输出 `data-ai-actor-id`、`data-ai-x`、`data-ai-y`、`data-ai-ball` 等坐标，AI 可以验证可见棋盘是否真的随时间轴移动。
+- 战术板弹层已用 DOM 半场实现，打开后自动播放，并支持暂停、播放、拖动进度条。
+- 战术板 DOM 已输出 5 名球员的 `data-ai-actor-id`、`data-ai-role`、`data-ai-x`、`data-ai-y`、`data-ai-ball` 等坐标，AI 可以验证可见棋盘是否真的随时间轴移动。
 - 终场复盘已加战术板入口，但还没有独立的赛后战术学院。
 
 ### 14.3 数据资源

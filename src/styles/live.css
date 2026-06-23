@@ -255,26 +255,32 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
 .coach-task-card .ct-desc{ color:#cfd7df; font-size:13px; margin-top:3px; }
 .coach-actions{ display:flex; gap:9px; margin-top:14px; flex-wrap:wrap; }
 .coach-actions .btn{ flex:1; min-width:140px; padding:11px 14px; font-size:14px; }
-.tactic-lesson-card{ width:min(760px,100%); padding:18px; background:linear-gradient(135deg,rgba(21,30,40,.98),rgba(14,18,24,.98)); }
+.tactic-lesson-card{ width:min(820px,100%); padding:18px; background:linear-gradient(135deg,rgba(21,30,40,.98),rgba(14,18,24,.98)); }
 .tactic-lesson-head{ position:sticky; top:-1px; z-index:4; display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
   margin:-2px 0 8px; padding:2px 0 8px; background:linear-gradient(135deg,rgba(21,30,40,.98),rgba(14,18,24,.98)); }
 .tactic-lesson-close{ border:1px solid rgba(255,255,255,.14); background:rgba(255,255,255,.06); color:#dce5ed;
   border-radius:8px; padding:7px 10px; font-size:12px; font-weight:900; cursor:pointer; }
 .tactic-lesson-intent{ color:#cfd7df; font-size:13px; line-height:1.45; margin:4px 0 10px; }
-.tactic-board{ width:100%; aspect-ratio:16/9; border:1px solid rgba(255,255,255,.12); border-radius:12px;
+.tactic-board{ width:100%; aspect-ratio:16/10; border:1px solid rgba(255,255,255,.12); border-radius:12px;
   background:linear-gradient(180deg,rgba(37,66,47,.78),rgba(22,42,32,.88)); overflow:hidden; position:relative; }
 .half-court{ position:absolute; inset:0; }
 .half-court::before{ content:""; position:absolute; left:5%; right:5%; top:8%; bottom:8%; border:2px solid rgba(255,255,255,.38); border-radius:12px; }
 .court-paint{ position:absolute; left:38%; top:8%; width:24%; height:34%; border:2px solid rgba(255,255,255,.34); border-top:0; }
 .court-rim{ position:absolute; left:48.2%; top:11%; width:3.6%; aspect-ratio:1; border:2px solid rgba(255,207,106,.9); border-radius:50%; }
 .court-arc{ position:absolute; left:24%; top:11%; width:52%; height:55%; border:2px solid rgba(255,255,255,.24); border-top:0; border-radius:0 0 100% 100%; }
-.board-piece{ position:absolute; z-index:3; width:26px; height:26px; margin:-13px 0 0 -13px; border-radius:50%;
+.board-piece{ position:absolute; z-index:3; width:32px; height:32px; margin:-16px 0 0 -16px; border-radius:50%;
   display:grid; place-items:center; font-size:11px; font-weight:1000; box-shadow:0 7px 18px rgba(0,0,0,.32); }
+.board-piece b{ line-height:1; }
+.board-piece em{ position:absolute; left:50%; top:31px; transform:translateX(-50%); color:#dfe9f2; font-style:normal; font-size:9px; font-weight:900;
+  white-space:nowrap; text-shadow:0 1px 3px rgba(0,0,0,.65); opacity:.9; }
 .board-piece.offense{ color:#10151b; background:#ffcf6a; border:2px solid #fff1b8; }
 .board-piece.defense{ color:#eff5fb; background:#30475e; border:2px solid #8fb8ff; }
 .ball-dot{ position:absolute; right:-3px; bottom:-3px; width:10px; height:10px; border-radius:50%; background:#f58426; border:1px solid #fff; }
 .board-ball{ position:absolute; z-index:5; width:12px; height:12px; margin:-6px 0 0 -6px; border-radius:50%;
   background:#f58426; border:1px solid #fff7dc; box-shadow:0 0 0 3px rgba(245,132,38,.22), 0 8px 18px rgba(0,0,0,.38); }
+.board-trail{ position:absolute; inset:0; z-index:0; width:100%; height:100%; pointer-events:none; }
+.board-trail polyline{ fill:none; stroke:rgba(255,207,106,.24); stroke-width:1.1; stroke-dasharray:2.2 2.2; vector-effect:non-scaling-stroke; }
+.board-trail polyline.defense{ stroke:rgba(143,184,255,.25); }
 .board-zone{ position:absolute; z-index:1; border:1px solid rgba(255,255,255,.2); border-radius:10px;
   background:rgba(122,162,255,.12); box-shadow:inset 0 0 18px rgba(122,162,255,.08); display:flex; align-items:flex-start; justify-content:center; }
 .board-zone b{ margin-top:4px; color:#dbe8ff; font-size:10px; font-weight:1000; text-shadow:0 1px 2px rgba(0,0,0,.45); }
@@ -298,14 +304,7 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
 .tactic-lesson-scrub{ display:grid; grid-template-columns:1fr auto; align-items:center; gap:9px; margin-top:10px; }
 .tactic-lesson-scrub input{ width:100%; accent-color:var(--ny-a); }
 .tactic-lesson-scrub span{ color:#9fb0bf; font-size:11px; font-weight:900; font-variant-numeric:tabular-nums; }
-.tactic-lesson-frame{ display:grid; gap:4px; margin-top:10px; }
-.tactic-lesson-frame b{ color:#fff; font-size:15px; }
-.tactic-lesson-frame span{ color:#cfd7df; font-size:13px; line-height:1.45; }
-.tactic-lesson-frame em{ color:#ffcf6a; font-style:normal; font-size:12px; font-weight:850; }
-.tactic-lesson-tags{ display:flex; flex-wrap:wrap; gap:6px; margin-top:9px; }
-.tactic-lesson-tags span{ color:#b8c4cf; background:rgba(255,255,255,.055); border:1px solid rgba(255,255,255,.09);
-  border-radius:7px; padding:4px 7px; font-size:10.5px; line-height:1.3; }
-.tactic-lesson-controls{ position:sticky; bottom:-1px; z-index:4; display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px;
+.tactic-lesson-controls{ position:sticky; bottom:-1px; z-index:4; display:grid; grid-template-columns:1fr; gap:8px;
   margin:13px 0 -2px; padding-top:10px; background:linear-gradient(135deg,rgba(21,30,40,.98),rgba(14,18,24,.98)); }
 .tutorial-step{ color:#ffcf6a; font-size:12px; font-weight:900; margin-bottom:6px; }
 .tutorial-dots{ display:flex; gap:5px; margin-top:10px; }
@@ -605,11 +604,9 @@ h2.title{ font-size:26px; font-weight:800; margin-bottom:6px; text-align:center;
   .tactic-lesson-card{ padding:13px; }
   .tactic-lesson-head .coach-title{ font-size:18px; }
   .tactic-lesson-close{ padding:6px 8px; }
-  .tactic-board{ aspect-ratio:1.22; border-radius:10px; }
-  .board-piece{ width:22px; height:22px; margin:-11px 0 0 -11px; font-size:10px; }
-  .tactic-lesson-frame b{ font-size:13.5px; }
-  .tactic-lesson-frame span{ font-size:12px; }
-  .tactic-lesson-tags span{ font-size:10px; }
+  .tactic-board{ aspect-ratio:1.12; border-radius:10px; }
+  .board-piece{ width:26px; height:26px; margin:-13px 0 0 -13px; font-size:10px; }
+  .board-piece em{ top:25px; font-size:8px; }
   .tactic-lesson-controls{ grid-template-columns:1fr; }
   .coach-modal.coach-docked .coach-card{ max-height:40vh; }
   .coach-modal.coach-mark-modal .coach-card{ max-height:32vh; padding:12px 13px; }

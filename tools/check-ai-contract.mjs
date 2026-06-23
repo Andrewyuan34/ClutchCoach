@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { AI_VERIFY_CONTRACT } from "../src/ai-verify.mjs";
+import { TACTIC_LESSONS } from "../src/data/tactical-data.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = new Map(process.argv.slice(2).map((arg) => {
@@ -50,7 +51,8 @@ record("verify.command_phase_assertions", aiVerify.includes("live.no_command_tab
 record("verify.command_ui_snapshot", aiVerify.includes("commandUi:") && aiVerify.includes("command.compact_by_default") && aiVerify.includes("command.final_plan.present") && aiVerify.includes("command.recommendations_hidden_without_help") && aiVerify.includes("firstScreenFits") && aiVerify.includes("commandLineupSignals"), "Compact command UI snapshot and assertions are wired.");
 record("verify.command_staff_snapshot", aiVerify.includes("commandStaff:") && aiVerify.includes("commandStaffSignals") && aiVerify.includes("staff.visible_reads.each_has_cost"), "Coach staff problem/read/cost snapshot and assertions are wired.");
 record("verify.command_commit_snapshot", aiVerify.includes("commandCommitSignals") && aiVerify.includes("command.commit_summary.single") && aiVerify.includes("command.commit_summary.no_draft_spam") && aiVerify.includes("command.commit.accepted_cost.present") && aiVerify.includes("command.feedback.references_accepted_cost"), "Command commit summary, accepted cost, feedback, and no-spam assertions are wired.");
-record("verify.tactic_lesson_snapshot", aiVerify.includes("tacticLessons:") && aiVerify.includes("tacticLessonSignals") && aiVerify.includes("lesson.frame_count_minimum") && aiVerify.includes("lesson.timeline.moving_actors") && aiVerify.includes("lesson.timeline.motion_distance") && aiVerify.includes("lesson.modal.renders_timeline") && aiVerify.includes("sampleTacticLessonMotion") && liveSim.includes("data-ai-actor-id") && tacticalData.includes("TACTIC_LESSONS") && tacticalData.includes("timeline:"), "Tactic lesson snapshot, timeline assertions, motion sampler, and rendered board coordinates are wired.");
+record("verify.tactic_lesson_snapshot", aiVerify.includes("tacticLessons:") && aiVerify.includes("tacticLessonSignals") && aiVerify.includes("lesson.timeline.pure_five_player_system") && aiVerify.includes("lesson.timeline.moving_actors") && aiVerify.includes("lesson.timeline.motion_distance") && aiVerify.includes("lesson.modal.renders_timeline") && aiVerify.includes("sampleTacticLessonMotion") && liveSim.includes("data-ai-actor-id") && tacticalData.includes("five-player-motion-v1") && tacticalData.includes("pureAnimation: true"), "Tactic lesson snapshot, pure five-player timeline assertions, motion sampler, and rendered board coordinates are wired.");
+checkFivePlayerTacticLessons();
 record("verify.postgame_recap_snapshot", aiVerify.includes("postgameRecapSignals") && aiVerify.includes("postgame.recap.traceable_when_present") && liveSim.includes("renderPostCoachRecap"), "Postgame coach recap snapshot and assertions are wired.");
 record("verify.json_sync", aiVerify.includes("textContent = JSON.stringify(snapshot)"), "Snapshot is written to JSON node.");
 record("verify.tactical_snapshot", aiVerify.includes("compactTacticalState") && aiVerify.includes("tactical,"), "Snapshot includes compact tactical state.");
@@ -184,4 +186,83 @@ function createAsset(pageUrl, assetPath, kind) {
 function getAttribute(tag, name) {
   const match = tag.match(new RegExp(`\\b${name}\\s*=\\s*(["'])(.*?)\\1`, "i"));
   return match?.[2] || "";
+}
+
+function checkFivePlayerTacticLessons() {
+  const lessons = Object.values(TACTIC_LESSONS);
+  const reports = lessons.map((lesson) => analyzeFivePlayerLesson(lesson));
+
+  record(
+    "lesson.data.pure_animation_contract",
+    reports.every((report) => report.system === "five-player-motion-v1" && report.mode === "pure-animation" && report.pureAnimation && report.loop),
+    reports.map((report) => `${report.lessonId}:${report.system}/${report.mode}/pure=${report.pureAnimation}/loop=${report.loop}`).join(","),
+  );
+  record(
+    "lesson.data.five_actor_tracks",
+    reports.every((report) => report.actorCount === 5 && report.personnel === 5 && report.trackCount === 5 && report.missingTracks.length === 0 && report.extraTracks.length === 0),
+    reports.map((report) => `${report.lessonId}:actors=${report.actorCount}/personnel=${report.personnel}/tracks=${report.trackCount}/missing=${report.missingTracks.join("|") || "none"}/extra=${report.extraTracks.join("|") || "none"}`).join(","),
+  );
+  record(
+    "lesson.data.every_actor_moves",
+    reports.every((report) => report.movingActors === 5 && report.minTravel >= 5),
+    reports.map((report) => `${report.lessonId}:moving=${report.movingActors}/minTravel=${report.minTravel}/maxTravel=${report.maxTravel}`).join(","),
+  );
+  record(
+    "lesson.data.ball_motion_traceable",
+    reports.every((report) => report.ballEvents >= 2 && report.invalidBallRefs.length === 0),
+    reports.map((report) => `${report.lessonId}:ball=${report.ballEvents}/invalid=${report.invalidBallRefs.join("|") || "none"}`).join(","),
+  );
+  record(
+    "lesson.data.visual_annotations_traceable",
+    reports.every((report) => report.arrowCount >= 2 && report.zoneCount >= 1 && report.invalidArrowRefs.length === 0),
+    reports.map((report) => `${report.lessonId}:arrows=${report.arrowCount}/zones=${report.zoneCount}/invalid=${report.invalidArrowRefs.join("|") || "none"}`).join(","),
+  );
+}
+
+function analyzeFivePlayerLesson(lesson) {
+  const timeline = lesson.timeline || {};
+  const actors = timeline.actors || [];
+  const actorIds = new Set(actors.map((actor) => actor.id));
+  const trackIds = Object.keys(timeline.tracks || {});
+  const missingTracks = actors.filter((actor) => !timeline.tracks?.[actor.id]).map((actor) => actor.id);
+  const extraTracks = trackIds.filter((id) => !actorIds.has(id));
+  const travel = actors.map((actor) => actorTravel(timeline.tracks?.[actor.id]));
+  const invalidBallRefs = (timeline.ball || [])
+    .filter((event) => event.holder && !actorIds.has(event.holder))
+    .map((event) => event.holder);
+  const invalidArrowRefs = (timeline.arrows || []).flatMap((arrow) => {
+    const refs = [arrow.from, arrow.to].filter((ref) => typeof ref === "string" && !actorIds.has(ref));
+    return refs.map((ref) => `${arrow.label || "arrow"}:${ref}`);
+  });
+
+  return {
+    lessonId: lesson.lessonId,
+    system: timeline.system || "",
+    mode: timeline.mode || "",
+    pureAnimation: !!timeline.pureAnimation,
+    loop: !!timeline.loop,
+    personnel: Number(timeline.personnel || 0),
+    actorCount: actors.length,
+    trackCount: trackIds.length,
+    missingTracks,
+    extraTracks,
+    movingActors: travel.filter((value) => value > 0.5).length,
+    minTravel: Math.round(Math.min(...travel) * 10) / 10,
+    maxTravel: Math.round(Math.max(...travel) * 10) / 10,
+    ballEvents: (timeline.ball || []).length,
+    invalidBallRefs,
+    arrowCount: (timeline.arrows || []).length,
+    zoneCount: (timeline.zones || []).length,
+    invalidArrowRefs,
+  };
+}
+
+function actorTravel(track) {
+  if (!Array.isArray(track) || track.length < 2) return 0;
+  const first = track[0];
+  return Math.max(...track.map((point) => {
+    const dx = (Number(point.x) || 0) - (Number(first.x) || 0);
+    const dy = (Number(point.y) || 0) - (Number(first.y) || 0);
+    return Math.sqrt(dx * dx + dy * dy);
+  }));
 }
