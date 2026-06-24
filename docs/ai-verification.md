@@ -392,3 +392,30 @@ node tools/check-ai-contract.mjs --url='http://127.0.0.1:8000/live.html?ai_verif
 ```
 
 The command prints a JSON report with `pass`, `failed`, and per-check details. It exits non-zero when any required contract piece is missing.
+
+## Player-Path Smoke Evidence
+
+Use `tools/player-smoke.mjs` when a change needs proof that a real player path still works:
+
+```powershell
+node tools/player-smoke.mjs --seed=demo-001
+```
+
+The smoke starts a temporary local server, opens the deterministic URL in a browser, selects a team, starts the game, calls timeout, verifies command-panel recommendation behavior, opens the tactic board, drags the timeline, resumes play, and reads `getAssertSummary()`.
+
+It writes local evidence under `snapshots/player-smoke/`:
+
+```text
+player-smoke.json
+01-select.png
+02-coach-intro.png
+03-live-before-timeout.png
+04-command-hidden-recommendations.png
+05-command-help.png
+06-command-drafts.png
+07-tactic-board-start.png
+08-tactic-board-scrubbed.png
+09-live-resumed.png
+```
+
+The JSON report includes pass/fail checks, the browser executable used, the temporary URL, a compact final `getState()` summary, and the sampled `motion` tactic lesson. The screenshot directory is intentionally ignored by git.

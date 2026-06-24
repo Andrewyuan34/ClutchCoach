@@ -50,8 +50,17 @@ node --check src/data/commentary-data.mjs
 node --check src/data/series-pbp-data.mjs
 node --check src/data/tactical-data.mjs
 node --check tools/check-ai-contract.mjs
+node --check tools/player-smoke.mjs
 node tools/check-ai-contract.mjs --url='http://127.0.0.1:8000/live.html?ai_verify=1&seed=demo-001'
 ```
+
+For player-path evidence with screenshots and a JSON report:
+
+```powershell
+node tools/player-smoke.mjs --seed=demo-001
+```
+
+It writes ignored evidence files under `snapshots/player-smoke/`.
 
 ## Player-Visible Smoke Test
 
@@ -77,5 +86,6 @@ src/tactical.mjs             tactical cause layer and trace ids
 src/data/tactical-data.mjs   tactical resources
 src/ai-verify.mjs            browser verification snapshot
 tools/check-ai-contract.mjs  contract smoke check
+tools/player-smoke.mjs      browser player-path smoke with screenshots and JSON evidence
 docs/ai-readable-structure-refactor-plan.md structure refactor execution plan
 ```

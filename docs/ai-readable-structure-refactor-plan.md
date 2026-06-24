@@ -151,8 +151,10 @@ node --check src/data/commentary-data.mjs
 node --check src/data/series-pbp-data.mjs
 node --check src/data/tactical-data.mjs
 node --check tools/check-ai-contract.mjs
+node --check tools/player-smoke.mjs
 node tools/check-ai-contract.mjs
 node tools/check-ai-contract.mjs --url='http://127.0.0.1:8000/live.html?ai_verify=1&seed=demo-001'
+node tools/player-smoke.mjs --seed=demo-001
 git diff --check
 ```
 
@@ -204,3 +206,10 @@ git diff --check
 - `src/ai-verify.mjs` 仍然是唯一公开入口，继续暴露 `window.__NBA_LIVE_VERIFY__`、`getState()`、`getAssertions()`、`getAssertSummary()` 和 `sampleTacticLessonMotion()`。
 - `tools/check-ai-contract.mjs` 已增加 `structure.ai_snapshot_helper_modules`，并改为按 helper 模块检查 command / tactic lesson / postgame 的内部快照来源。
 - 验收重点保持不变：外部 AI 合约不变，但后续 Agent 可以按功能域去 `src/ai/` 定位快照和断言来源。
+
+## 证据补强执行记录
+
+- 已修复 `src/live-sim.mjs` 在关闭指挥台时遗漏导入 `clonePlain` 的运行时问题；该问题由浏览器 player smoke 暴露。
+- 已清理 `src/ai/postgame-signals.mjs` 和 `src/ai/tactic-lesson-signals.mjs` 的 EOF 空白，`git diff --check` 不再报告空白错误。
+- 已新增 `tools/player-smoke.mjs`，用于自动生成玩家路径证据：选队、开赛、叫暂停、助教提示、战术板、拖动时间轴、恢复比赛、读取 `getAssertSummary()`。
+- `tools/player-smoke.mjs` 会把截图和 `player-smoke.json` 写到 `snapshots/player-smoke/`，该目录已在 `.gitignore` 中忽略。

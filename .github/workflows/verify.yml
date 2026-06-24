@@ -1,0 +1,45 @@
+name: Verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  static-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Syntax checks
+        run: |
+          node --check src/live-sim.mjs
+          node --check src/features/tactic-board.mjs
+          node --check src/features/command-center.mjs
+          node --check src/features/livecast.mjs
+          node --check src/features/postgame-recap.mjs
+          node --check src/ai-verify.mjs
+          node --check src/ai/dom-utils.mjs
+          node --check src/ai/command-signals.mjs
+          node --check src/ai/tactic-lesson-signals.mjs
+          node --check src/ai/postgame-signals.mjs
+          node --check src/tactical.mjs
+          node --check src/state.mjs
+          node --check src/utils.mjs
+          node --check src/data/commentary-data.mjs
+          node --check src/data/series-pbp-data.mjs
+          node --check src/data/tactical-data.mjs
+          node --check tools/check-ai-contract.mjs
+          node --check tools/player-smoke.mjs
+
+      - name: Static AI contract
+        run: node tools/check-ai-contract.mjs
+
+      - name: Whitespace check
+        run: git diff --check

@@ -118,6 +118,13 @@ There is no `index.html` app path anymore. Use `/live.html` as the product entry
 - Reads `AI_VERIFY_CONTRACT`, verifies required test ids, docs, browser global wiring, runtime generated id patterns, and optionally a served URL.
 - Its JSON output is intentionally machine-readable for AI agents and CI.
 
+`tools/player-smoke.mjs`
+
+- Browser-driven player-path smoke check for evidence gathering.
+- Starts a temporary static server, opens `live.html?ai_verify=1&seed=...`, walks through select team, start game, timeout command panel, assistant help, tactic board playback/scrub, resume play, and assertion summary.
+- Writes screenshots plus `player-smoke.json` under `snapshots/player-smoke/`, which is ignored by git.
+- Use this when local manual evidence matters; keep `tools/check-ai-contract.mjs` as the faster static/URL contract gate.
+
 ## Maintenance Notes
 
 - Preserve `live.html` as a static-server entry. ES module imports require serving files over HTTP.

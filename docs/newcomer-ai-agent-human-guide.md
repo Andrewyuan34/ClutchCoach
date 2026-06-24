@@ -172,7 +172,16 @@ node --check src/data/commentary-data.mjs
 node --check src/data/series-pbp-data.mjs
 node --check src/data/tactical-data.mjs
 node --check tools/check-ai-contract.mjs
+node --check tools/player-smoke.mjs
 ```
+
+如果需要留下“玩家路径”证据，而不是只跑静态合约，运行：
+
+```powershell
+node tools/player-smoke.mjs --seed=demo-001
+```
+
+它会启动临时本地服务，自动完成选队、开赛、叫暂停、打开助教提示、打开战术板、拖动时间轴、恢复比赛，并把截图与 JSON 证据写到 `snapshots/player-smoke/`。该目录已被 `.gitignore` 忽略，适合本地审计或提交前自查。
 
 ## 5. 怎么把体验问题讲给 AI
 
@@ -224,6 +233,7 @@ src/tactical.mjs                  战术因果、调整窗口、trace、AI debug
 src/data/tactical-data.mjs        球员战术特征、战术适配、对手反制
 src/ai-verify.mjs                 AI 原生验证快照和断言
 tools/check-ai-contract.mjs        静态/URL 合约检查
+tools/player-smoke.mjs             玩家路径浏览器 smoke，输出截图和 JSON 证据
 docs/ai-verification.md           AI 验证协议
 docs/architecture.md              模块边界
 ```

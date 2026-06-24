@@ -49,6 +49,7 @@ import {
   costLabel,
   createCommandSession,
   initCommandCenterFeature,
+  clonePlain,
   recordCommandDraft,
   recordCommandFeedbackTrace,
   rememberCommandSession,

@@ -20,7 +20,7 @@ function includesAll(text, values) {
   return values.filter((value) => !text.includes(value));
 }
 
-const [html, liveSim, tacticBoard, commandCenter, livecast, postgameRecap, aiVerify, commandSignals, tacticLessonSignalsSource, postgameSignalsSource, aiDomUtils, tactical, tacticalData, readme, aiDocs, architectureDocs, structurePlanDocs] = await Promise.all([
+const [html, liveSim, tacticBoard, commandCenter, livecast, postgameRecap, aiVerify, commandSignals, tacticLessonSignalsSource, postgameSignalsSource, aiDomUtils, tactical, tacticalData, playerSmoke, readme, aiDocs, architectureDocs, structurePlanDocs] = await Promise.all([
   readFile(path.join(root, "live.html"), "utf8"),
   readFile(path.join(root, "src", "live-sim.mjs"), "utf8"),
   readFile(path.join(root, "src", "features", "tactic-board.mjs"), "utf8"),
@@ -34,6 +34,7 @@ const [html, liveSim, tacticBoard, commandCenter, livecast, postgameRecap, aiVer
   readFile(path.join(root, "src", "ai", "dom-utils.mjs"), "utf8"),
   readFile(path.join(root, "src", "tactical.mjs"), "utf8"),
   readFile(path.join(root, "src", "data", "tactical-data.mjs"), "utf8"),
+  readFile(path.join(root, "tools", "player-smoke.mjs"), "utf8"),
   readFile(path.join(root, "README.md"), "utf8"),
   readFile(path.join(root, "docs", "ai-verification.md"), "utf8"),
   readFile(path.join(root, "docs", "architecture.md"), "utf8"),
@@ -68,6 +69,7 @@ record("structure.command_center_feature_module", liveSim.includes("./features/c
 record("structure.livecast_feature_module", liveSim.includes("./features/livecast.mjs") && livecast.includes("export function pushFeed") && livecast.includes("export function richFeed") && livecast.includes("export function homeCrowdText") && livecast.includes("export function fmtClock") && livecast.includes("registerLivecastTrace") && livecast.includes("dataset.aiLivecastId") && !liveSim.includes("function pushFeed(") && !liveSim.includes("function richFeed(") && !liveSim.includes("registerLivecastTrace"), "Livecast row rendering, trace DOM attributes, rich feed, home-crowd text, and clock formatting are extracted from live-sim into a feature module.");
 record("structure.postgame_recap_feature_module", liveSim.includes("./features/postgame-recap.mjs") && postgameRecap.includes("export function buildPostgameRecapItems") && postgameRecap.includes("export function renderPostCoachRecap") && postgameRecap.includes("data-ai-command-session-id") && postgameRecap.includes("openTacticLesson") && !liveSim.includes("function buildPostgameRecapItems(") && !liveSim.includes("function renderPostCoachRecap("), "Postgame command recap items, trace DOM attributes, and lesson links are extracted from live-sim into a feature module.");
 record("structure.ai_snapshot_helper_modules", aiVerify.includes("./ai/command-signals.mjs") && aiVerify.includes("./ai/tactic-lesson-signals.mjs") && aiVerify.includes("./ai/postgame-signals.mjs") && commandSignals.includes("export function commandPanelMetrics") && commandSignals.includes("export function commandCommitSignals") && tacticLessonSignalsSource.includes("export function tacticLessonSignals") && tacticLessonSignalsSource.includes("export function sampleTacticLessonMotion") && postgameSignalsSource.includes("export function postgameRecapSignals") && aiDomUtils.includes("export function isVisible") && aiDomUtils.includes("export function parsePercent"), "AI verification internals are split into feature-scoped helper modules while ai-verify remains the public entry.");
+record("tools.player_smoke.present", playerSmoke.includes("player-smoke") && playerSmoke.includes("getAssertSummary") && playerSmoke.includes("sampleTacticLessonMotion") && playerSmoke.includes("screenshot(page") && playerSmoke.includes("snapshots/player-smoke"), "Player-path browser smoke can generate screenshots and JSON evidence.");
 record("verify.postgame_recap_snapshot", postgameSignalsSource.includes("postgameRecapSignals") && aiVerify.includes("postgame.recap.traceable_when_present") && liveSim.includes("renderPostCoachRecap"), "Postgame coach recap snapshot and assertions are wired.");
 record("verify.json_sync", aiVerify.includes("textContent = JSON.stringify(snapshot)"), "Snapshot is written to JSON node.");
 record("verify.tactical_snapshot", aiVerify.includes("compactTacticalState") && aiVerify.includes("tactical,"), "Snapshot includes compact tactical state.");

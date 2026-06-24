@@ -290,4 +290,3 @@ function sampleBall(timeline, playhead) {
   }
   return { holder: current.holder || "", label: current.label || "", x: pos.x, y: pos.y };
 }
-
